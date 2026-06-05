@@ -260,9 +260,9 @@ void FScene::prepare(JobSystem& js,
             size_t const index = DIRECTIONAL_LIGHTS_COUNT + std::distance(first, p) + i;
             assert_invariant(index < lightData.size());
             if (lcm.isRectLight(li)) {
-                float3 const edge1 = float3(shaderWorldTransform[0]);
-                float3 const edge2 = float3(shaderWorldTransform[1]);
-                float3 const n = normalize(float3(shaderWorldTransform[2]));
+                float3 const edge1 = shaderWorldTransform[0].xyz;
+                float3 const edge2 = shaderWorldTransform[1].xyz;
+                float3 const n = normalize(shaderWorldTransform[2].xyz);
                 float const radius = std::max(length(edge1), length(edge2));
                 lightData.elementAt<POSITION_RADIUS>(index) = float4{ position.xyz, radius };
                 lightData.elementAt<DIRECTION>(index) = n;
