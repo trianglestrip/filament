@@ -18,6 +18,7 @@ set(RESOURCE_BINS)
 
 set(MATERIAL_SRCS
         materials/aiDefaultMat.mat
+        materials/pbrtTextured.mat
         materials/bakedColor.mat
         materials/bakedTexture.mat
         materials/aoPreview.mat
@@ -114,16 +115,22 @@ set(CMGEN_ARGS --quiet --format=ktx --size=256 --extract-blur=0.1)
 function(add_envmap SOURCE TARGET)
     set(source_envmap "${ROOT_DIR}/${SOURCE}")
 
-    set(target_skybox "${PROJECT_BINARY_DIR}/assets/ibl/${TARGET}/${TARGET}_skybox.ktx")
-    set(target_envmap "${PROJECT_BINARY_DIR}/assets/ibl/${TARGET}/${TARGET}_ibl.ktx")
+    set(_asset_root "${PROJECT_BINARY_DIR}")
+    if (FILAMENT_SEPARATE_OUTPUT_DIRS)
+        set(_asset_root "${CMAKE_BINARY_DIR}/bin")
+    endif()
+    set(target_skybox "${_asset_root}/assets/ibl/${TARGET}/${TARGET}_skybox.ktx")
+    set(target_envmap "${_asset_root}/assets/ibl/${TARGET}/${TARGET}_ibl.ktx")
 
     set(target_envmaps ${target_envmaps} ${target_skybox} PARENT_SCOPE)
     set(target_envmaps ${target_envmaps} ${target_envmap} PARENT_SCOPE)
 
     add_custom_command(OUTPUT ${target_skybox} ${target_envmap}
-        COMMAND cmgen -x assets/ibl/${TARGET} ${CMGEN_ARGS} ${source_envmap}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_asset_root}/assets/ibl/${TARGET}"
+        COMMAND cmgen -x "${_asset_root}/assets/ibl/${TARGET}" ${CMGEN_ARGS} ${source_envmap}
         MAIN_DEPENDENCY ${source_envmap}
         DEPENDS cmgen
+        WORKING_DIRECTORY ${_asset_root}
         COMMENT "Generating environment map ${target_envmap}")
 endfunction()
 
@@ -302,6 +309,7 @@ if (NOT ANDROID)
     add_demo(texturedquad)
     add_demo(vbotest)
     add_demo(viewtest)
+    add_demo(pbrt_kitchen)
 
     # Sample app specific
     target_link_libraries(frame_generator PRIVATE imageio)
@@ -316,6 +324,8 @@ if (NOT ANDROID)
     target_link_libraries(sample_cloth PRIVATE filameshio)
     target_link_libraries(sample_normal_map PRIVATE filameshio)
     target_link_libraries(suzanne PRIVATE filameshio suzanne-resources)
+    target_link_libraries(pbrt_kitchen PRIVATE pbrtio assimp stb)
+    add_dependencies(pbrt_kitchen envs)
 
     if (FILAMENT_DISABLE_MATOPT)
         add_definitions(-DFILAMENT_DISABLE_MATOPT=1)
@@ -346,12 +356,17 @@ endif()
 #
 # ==================================================================================================
 
-file(COPY ../third_party/textures DESTINATION ${PROJECT_BINARY_DIR})
+set(_sample_asset_root "${PROJECT_BINARY_DIR}")
+if (FILAMENT_SEPARATE_OUTPUT_DIRS)
+    set(_sample_asset_root "${CMAKE_BINARY_DIR}/bin")
+endif()
+
+file(COPY ../third_party/textures DESTINATION ${_sample_asset_root})
 add_custom_target(textures ALL DEPENDS textures)
 add_dependencies(filament textures)
 set_target_properties(textures PROPERTIES FOLDER Samples/Assets)
 
-file(COPY ../assets DESTINATION ${PROJECT_BINARY_DIR}
+file(COPY ../assets DESTINATION ${_sample_asset_root}
         PATTERN "reference" EXCLUDE
         PATTERN "environments" EXCLUDE)
 add_custom_target(assets ALL DEPENDS assets)

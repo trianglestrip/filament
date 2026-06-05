@@ -83,6 +83,8 @@ set(PRIVATE_HDRS
     ${PRIVATE_HDR_DIR}/Obj/ObjFileMtlImporter.h
     ${PRIVATE_HDR_DIR}/Obj/ObjFileParser.h
     ${PRIVATE_HDR_DIR}/Obj/ObjTools.h
+    ${PRIVATE_HDR_DIR}/Ply/PlyLoader.h
+    ${PRIVATE_HDR_DIR}/Ply/PlyParser.h
     ${PRIVATE_HDR_DIR}/PostProcessing/OptimizeGraph.h
     ${PRIVATE_HDR_DIR}/PostProcessing/OptimizeMeshes.h
     ${PRIVATE_HDR_DIR}/Common/PolyTools.h
@@ -157,6 +159,8 @@ set(SRCS
     ${SRC_DIR}/code/Obj/ObjFileImporter.cpp
     ${SRC_DIR}/code/Obj/ObjFileMtlImporter.cpp
     ${SRC_DIR}/code/Obj/ObjFileParser.cpp
+    ${SRC_DIR}/code/Ply/PlyLoader.cpp
+    ${SRC_DIR}/code/Ply/PlyParser.cpp
     ${SRC_DIR}/code/PostProcessing/OptimizeGraph.cpp
     ${SRC_DIR}/code/PostProcessing/OptimizeMeshes.cpp
     ${SRC_DIR}/code/Common/PostStepRegistry.cpp
@@ -231,7 +235,6 @@ add_definitions(
     -DASSIMP_BUILD_NO_OFF_IMPORTER
     -DASSIMP_BUILD_NO_OGRE_IMPORTER
     -DASSIMP_BUILD_NO_OPENGEX_IMPORTER
-    -DASSIMP_BUILD_NO_PLY_IMPORTER
     -DASSIMP_BUILD_NO_Q3BSP_IMPORTER
     -DASSIMP_BUILD_NO_Q3D_IMPORTER
     -DASSIMP_BUILD_NO_RAW_IMPORTER

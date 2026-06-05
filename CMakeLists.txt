@@ -39,6 +39,10 @@ endif()
 
 project(TNT C CXX ${EXTRA_LANGS})
 
+# bin/ (exe+dll), lib/ (.lib), intermediate/ (.obj) — see build/common/OutputDirectories.cmake
+include(${CMAKE_CURRENT_SOURCE_DIR}/build/common/OutputDirectories.cmake)
+filament_setup_output_directories()
+
 # ==================================================================================================
 # Options
 # ==================================================================================================
@@ -915,6 +919,7 @@ add_subdirectory(${LIBRARIES}/image)
 add_subdirectory(${LIBRARIES}/imagediff)
 add_subdirectory(${LIBRARIES}/ktxreader)
 add_subdirectory(${LIBRARIES}/math)
+add_subdirectory(${LIBRARIES}/pbrtio)
 add_subdirectory(${LIBRARIES}/mathio)
 add_subdirectory(${LIBRARIES}/uberz)
 add_subdirectory(${LIBRARIES}/utils)
