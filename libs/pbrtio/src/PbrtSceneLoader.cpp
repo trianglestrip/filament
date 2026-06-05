@@ -207,7 +207,8 @@ static filament::Texture* uploadDecodedTexture(filament::Engine& engine, PbrtDec
     return tex;
 }
 
-static std::vector<TextureJob> collectTextureJobs(const PbrtLoadedScene& scene) {
+static std::vector<TextureJob> collectTextureJobs(const PbrtLoadedScene& scene,
+        bool loadEnvironmentTexture) {
     std::vector<TextureJob> jobs;
     std::set<std::string> seen;
     for (const auto& mesh : scene.meshes) {
@@ -219,7 +220,7 @@ static std::vector<TextureJob> collectTextureJobs(const PbrtLoadedScene& scene) 
             jobs.push_back({ key, mesh.baseColorTexturePath, mesh.baseColorTextureSRGB });
         }
     }
-    if (scene.environment.valid && !scene.environment.mapPath.empty()) {
+    if (loadEnvironmentTexture && scene.environment.valid && !scene.environment.mapPath.empty()) {
         const std::string key = scene.environment.mapPath.string();
         if (seen.insert(key).second) {
             jobs.push_back({ key, scene.environment.mapPath, false });
@@ -229,7 +230,7 @@ static std::vector<TextureJob> collectTextureJobs(const PbrtLoadedScene& scene) 
 }
 
 bool loadPbrtFilamentScene(const std::filesystem::path& pbrtPath, filament::Engine* engine,
-        PbrtFilamentScene& out) {
+        PbrtFilamentScene& out, bool loadEnvironmentTexture) {
     const auto totalStart = Clock::now();
     out.textures = {};
     out.timings = {};
@@ -241,7 +242,8 @@ bool loadPbrtFilamentScene(const std::filesystem::path& pbrtPath, filament::Engi
     out.timings.parseMs = elapsedMs(parseStart);
 
     const auto collectStart = Clock::now();
-    const std::vector<TextureJob> textureJobs = collectTextureJobs(out.scene);
+    const std::vector<TextureJob> textureJobs = collectTextureJobs(out.scene,
+            loadEnvironmentTexture);
     out.timings.collectMs = elapsedMs(collectStart);
 
     std::vector<PbrtDecodedImage> decodedImages(textureJobs.size());

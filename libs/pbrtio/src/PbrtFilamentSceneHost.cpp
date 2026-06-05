@@ -16,6 +16,7 @@
 #include <utils/Path.h>
 
 #include <cmath>
+#include <chrono>
 #include <iostream>
 #include <map>
 
@@ -73,11 +74,13 @@ MaterialInstance* PbrtFilamentSceneHost::getOrCreateMaterial(Engine& engine,
         const std::string texKey = mesh.baseColorTexturePath.string();
         auto texIt = mScene.textures.gpu.find(texKey);
         if (texIt != mScene.textures.gpu.end() && texIt->second) {
-            Material* material = Material::Builder()
-                    .package(mOptions.materials.texturedData, mOptions.materials.texturedSize)
-                    .build(engine);
-            mOwnedMaterials.push_back(material);
-            mi = material->createInstance();
+            if (!mTexturedMaterial) {
+                mTexturedMaterial = Material::Builder()
+                        .package(mOptions.materials.texturedData, mOptions.materials.texturedSize)
+                        .build(engine);
+                mOwnedMaterials.push_back(mTexturedMaterial);
+            }
+            mi = mTexturedMaterial->createInstance();
             TextureSampler sampler(TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
                     TextureSampler::MagFilter::LINEAR,
                     TextureSampler::WrapMode::REPEAT);
@@ -89,11 +92,13 @@ MaterialInstance* PbrtFilamentSceneHost::getOrCreateMaterial(Engine& engine,
     }
 
     if (!mi && mOptions.materials.litData && mOptions.materials.litSize > 0) {
-        Material* material = Material::Builder()
-                .package(mOptions.materials.litData, mOptions.materials.litSize)
-                .build(engine);
-        mOwnedMaterials.push_back(material);
-        mi = material->createInstance();
+        if (!mLitMaterial) {
+            mLitMaterial = Material::Builder()
+                    .package(mOptions.materials.litData, mOptions.materials.litSize)
+                    .build(engine);
+            mOwnedMaterials.push_back(mLitMaterial);
+        }
+        mi = mLitMaterial->createInstance();
         mi->setParameter("baseColor", RgbType::LINEAR, mesh.baseColor);
         mi->setParameter("roughness", mesh.roughness);
         mi->setParameter("metallic", mesh.metallic);
@@ -128,10 +133,13 @@ PbrtFilamentSceneHost::RectLightAsset PbrtFilamentSceneHost::createRectAreaLight
     Material* material = nullptr;
     MaterialInstance* mi = nullptr;
     if (mOptions.materials.unlitData && mOptions.materials.unlitSize > 0) {
-        material = Material::Builder()
-                .package(mOptions.materials.unlitData, mOptions.materials.unlitSize)
-                .build(engine);
-        mi = material->createInstance();
+        if (!mUnlitMaterial) {
+            mUnlitMaterial = Material::Builder()
+                    .package(mOptions.materials.unlitData, mOptions.materials.unlitSize)
+                    .build(engine);
+            mOwnedMaterials.push_back(mUnlitMaterial);
+        }
+        mi = mUnlitMaterial->createInstance();
         const float3 radiance = rect.radiance * rect.scale;
         mi->setParameter("baseColor", RgbType::LINEAR, float3(0.f));
         mi->setParameter("emissive", float4(radiance, 1.f));
@@ -149,17 +157,19 @@ PbrtFilamentSceneHost::RectLightAsset PbrtFilamentSceneHost::createRectAreaLight
 
     const float3 radiance = rect.radiance * rect.scale;
     const float quadArea = std::max(rect.width * rect.height, 1e-4f);
-    const float luminance = (radiance.x + radiance.y + radiance.z) / 3.f;
-    const float lumens = luminance * quadArea * float(M_PI);
+    const float maxChannel = std::max(radiance.x, std::max(radiance.y, radiance.z));
+    const float3 lightColor = maxChannel > 0.f ? radiance / maxChannel : float3(1.f);
+    const float luminance = dot(radiance, float3(0.2126f, 0.7152f, 0.0722f));
+    const float lumens = std::max(luminance * quadArea * float(M_PI), 1e-4f);
 
     Entity lightEntity = EntityManager::get().create();
     auto& tcm = engine.getTransformManager();
     tcm.create(lightEntity);
     tcm.setTransform(tcm.getInstance(lightEntity), buildRectLightTransform(rect));
     LightManager::Builder(LightManager::Type::RECT)
-            .color(radiance)
+            .color(lightColor)
             .intensity(lumens)
-            .falloff(50.f)
+            .falloff(100.f)
             .castShadows(false)
             .build(engine, lightEntity);
     scene.addEntity(lightEntity);
@@ -177,7 +187,7 @@ bool PbrtFilamentSceneHost::build(Engine& engine, Scene& scene,
     mResult = {};
     mScene = {};
 
-    if (!loadPbrtFilamentScene(pbrtPath, &engine, mScene)) {
+    if (!loadPbrtFilamentScene(pbrtPath, &engine, mScene, mOptions.loadEnvironmentTexture)) {
         return false;
     }
 
@@ -186,6 +196,7 @@ bool PbrtFilamentSceneHost::build(Engine& engine, Scene& scene,
     auto& rcm = engine.getRenderableManager();
     auto& em = EntityManager::get();
 
+    const auto meshImportStart = std::chrono::steady_clock::now();
     for (const auto& mesh : mScene.scene.meshes) {
         if (!mesh.plyFileExists) {
             std::cerr << "Missing mesh: " << mesh.plyPath << std::endl;
@@ -220,6 +231,8 @@ bool PbrtFilamentSceneHost::build(Engine& engine, Scene& scene,
         }
         ++mResult.meshesLoaded;
     }
+    mResult.meshImportMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - meshImportStart).count();
 
     if (mOptions.spawnAnalyticLights) {
         for (const auto& light : mScene.scene.lights) {
@@ -264,7 +277,9 @@ void PbrtFilamentSceneHost::destroy(Engine& engine, Scene& scene) {
         scene.remove(asset.meshEntity);
         engine.destroy(asset.meshEntity);
         engine.destroy(asset.mi);
-        engine.destroy(asset.material);
+        if (asset.material) {
+            engine.destroy(asset.material);
+        }
         engine.destroy(asset.vb);
         engine.destroy(asset.ib);
         EntityManager::get().destroy(asset.meshEntity);
@@ -278,6 +293,9 @@ void PbrtFilamentSceneHost::destroy(Engine& engine, Scene& scene) {
         engine.destroy(material);
     }
     mOwnedMaterials.clear();
+    mLitMaterial = nullptr;
+    mTexturedMaterial = nullptr;
+    mUnlitMaterial = nullptr;
 
     destroyPbrtFilamentTextures(engine, mScene.textures);
 

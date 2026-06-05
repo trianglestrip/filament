@@ -36,16 +36,17 @@ struct PbrtFilamentMaterialPackages {
     size_t unlitSize = 0;
 };
 
-struct PbrtFilamentBuildOptions {
-    PbrtFilamentMaterialPackages materials;
-    bool spawnAnalyticLights = true;
-};
-
-struct PbrtFilamentBuildResult {
-    size_t meshesLoaded = 0;
-    size_t analyticLightCount = 0;
-    size_t rectAreaLightCount = 0;
-};
+struct PbrtFilamentBuildOptions {
+    PbrtFilamentMaterialPackages materials;
+    bool spawnAnalyticLights = true;
+    bool loadEnvironmentTexture = true;
+};
+struct PbrtFilamentBuildResult {
+    size_t meshesLoaded = 0;
+    size_t analyticLightCount = 0;
+    size_t rectAreaLightCount = 0;
+    double meshImportMs = 0;
+};
 
 class PbrtFilamentSceneHost {
 public:
@@ -83,10 +84,13 @@ private:
     PbrtFilamentScene mScene;
     PbrtFilamentBuildOptions mOptions;
     PbrtFilamentBuildResult mResult;
-    std::unique_ptr<MeshAssimp> mMeshLoader;
-    std::map<std::string, filament::MaterialInstance*> mMaterialInstances;
-    std::vector<filament::Material*> mOwnedMaterials;
-    std::vector<utils::Entity> mAnalyticLights;
+    std::unique_ptr<MeshAssimp> mMeshLoader;
+    std::map<std::string, filament::MaterialInstance*> mMaterialInstances;
+    std::vector<filament::Material*> mOwnedMaterials;
+    filament::Material* mLitMaterial = nullptr;
+    filament::Material* mTexturedMaterial = nullptr;
+    filament::Material* mUnlitMaterial = nullptr;
+    std::vector<utils::Entity> mAnalyticLights;
     std::vector<RectLightAsset> mRectLights;
     bool mBuilt = false;
 };

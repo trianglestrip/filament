@@ -142,7 +142,7 @@ bool loadPbrtScene(const std::filesystem::path& pbrtPath, PbrtLoadedScene& out);
  * When engine is null, only CPU decode is performed.
  */
 bool loadPbrtFilamentScene(const std::filesystem::path& pbrtPath, filament::Engine* engine,
-        PbrtFilamentScene& out);
+        PbrtFilamentScene& out, bool loadEnvironmentTexture = true);
 
 void destroyPbrtFilamentTextures(filament::Engine& engine, PbrtFilamentTextures& textures);
 
