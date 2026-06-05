@@ -156,7 +156,7 @@ const MaterialSceneEntity& BasicScene::getMaterial(const MaterialRef& materialRe
     }
 }
 
-const SceneEntity& BasicScene::getAreaLight(int lightIndex)
+const SceneEntity& BasicScene::getAreaLight(int lightIndex) const
 {
     FALCOR_ASSERT(lightIndex >= 0 && lightIndex < mAreaLights.size());
     return mAreaLights[lightIndex];

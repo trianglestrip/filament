@@ -24,10 +24,11 @@ set(SRCS
     src/Builder.cpp
     src/LoopSubdivide.cpp
     src/FilamentPbrtLoader.cpp
+    src/PbrtSceneLoader.cpp
 )
 
 include_directories(${PUBLIC_HDR_DIR})
 add_library(${TARGET} STATIC ${PUBLIC_HDRS} ${SRCS})
 target_include_directories(${TARGET} PUBLIC ${PUBLIC_HDR_DIR})
-target_link_libraries(${TARGET} PUBLIC math)
+target_link_libraries(${TARGET} PUBLIC math stb taskflow filament utils)
 set_target_properties(${TARGET} PROPERTIES FOLDER Libs)

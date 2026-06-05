@@ -11,6 +11,8 @@ struct Light {
     uint lightType;
     int shadowIndex;
     int channels;
+    vec3 rectEdge1;
+    vec3 rectEdge2;
 };
 
 struct PixelParams {

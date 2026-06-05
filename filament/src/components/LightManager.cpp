@@ -203,7 +203,9 @@ void FLightManager::create(const Builder& builder, Entity const entity) {
         setColor(i, builder->mColor);
 
         // this must be set before intensity
-        setSpotLightCone(i, builder->mSpotInnerOuter.x, builder->mSpotInnerOuter.y);
+        if (builder->mType != Type::RECT) {
+            setSpotLightCone(i, builder->mSpotInnerOuter.x, builder->mSpotInnerOuter.y);
+        }
         setIntensity(i, builder->mIntensity, builder->mIntensityUnit);
 
         setFalloff(i, builder->mCastLight ? builder->mFalloff : 0);
@@ -360,6 +362,11 @@ void FLightManager::setIntensity(Instance const i, float const intensity, Intens
                     // intensity specified directly in Candela, no conversion needed
                     luminousIntensity = luminousPower;
                 }
+                break;
+
+            case Type::RECT:
+                // intensity specified as total luminous power (lumen) for the emitting quad
+                luminousIntensity = luminousPower * f::ONE_OVER_PI;
                 break;
         }
         

@@ -1,56 +1,40 @@
 /*
  * PBRT kitchen scene viewer sample.
- * Parses pbrt-v4 scenes using pbrtio (ported from Falcor PBRTImporter) and renders with Filament.
+ * Strict-ish PBRT preview: rect area lights only, no IBL, minimal post-processing.
  */
 
 #include "common/arguments.h"
 
-#include <pbrtio/FilamentPbrtLoader.h>
+#include <pbrtio/PbrtFilamentSceneHost.h>
 
 #include <filament/Camera.h>
 #include <filament/Engine.h>
-#include <filament/LightManager.h>
-#include <filament/Material.h>
-#include <filament/RenderableManager.h>
 #include <filament/Renderer.h>
 #include <filament/Scene.h>
-#include <filament/Texture.h>
-#include <filament/TextureSampler.h>
-#include <filament/TransformManager.h>
 #include <filament/View.h>
-
-#include <stb_image.h>
 
 #include <filamentapp/Config.h>
 #include <filamentapp/FilamentApp.h>
-#include <filamentapp/MeshAssimp.h>
 
-#include <utils/EntityManager.h>
 #include <utils/Path.h>
 #include <utils/getopt.h>
 
 #include <iostream>
-#include <map>
 #include <memory>
 #include <string>
 
 #include "generated/resources/resources.h"
 
 using namespace filament;
-using namespace filament::math;
 using namespace utils;
 
 struct App {
     Config config;
     std::filesystem::path scenePath;
-    std::unique_ptr<MeshAssimp> meshLoader;
-    std::map<std::string, MaterialInstance*> materials;
-    std::map<std::string, Texture*> textures;
-    std::vector<Texture*> ownedTextures;
-    std::vector<Entity> lights;
+    bool strictPbrt = true;
+    std::unique_ptr<filament::pbrtio::PbrtFilamentSceneHost> sceneHost;
 };
 
-static const char* IBL_FOLDER = "assets/ibl/lightroom_14b";
 static const char* DEFAULT_SCENE =
         "D:/gitProject/VLR_WF/models/kitchen/scene-v4.pbrt";
 
@@ -66,6 +50,8 @@ static void printUsage(char* name) {
             "API_USAGE"
             "   --scene=<path>, -s <path>\n"
             "       PBRT scene file (default: kitchen scene-v4.pbrt)\n\n"
+            "   --ibl\n"
+            "       Enable default IBL (off by default for strict PBRT preview)\n\n"
     );
     const std::string from("EXEC");
     for (size_t pos = usage.find(from); pos != std::string::npos; pos = usage.find(from, pos)) {
@@ -79,11 +65,12 @@ static void printUsage(char* name) {
 }
 
 static int handleCommandLineArguments(int argc, char* argv[], App* app) {
-    static constexpr const char* OPTSTR = "ha:s:";
+    static constexpr const char* OPTSTR = "hai:s:";
     static const utils::getopt::option OPTIONS[] = {
             { "help",  utils::getopt::no_argument,       nullptr, 'h' },
             { "api",   utils::getopt::required_argument, nullptr, 'a' },
             { "scene", utils::getopt::required_argument, nullptr, 's' },
+            { "ibl",   utils::getopt::no_argument,       nullptr, 'i' },
             { nullptr, 0, nullptr, 0 }
     };
     int opt;
@@ -101,109 +88,44 @@ static int handleCommandLineArguments(int argc, char* argv[], App* app) {
             case 's':
                 app->scenePath = arg;
                 break;
+            case 'i':
+                app->strictPbrt = false;
+                break;
         }
     }
     return utils::getopt::optind;
 }
 
-static Texture* loadBaseColorTexture(Engine& engine, App& app,
-        const std::filesystem::path& path, bool sRGB) {
-    const std::string key = path.string();
-    auto cached = app.textures.find(key);
-    if (cached != app.textures.end()) {
-        return cached->second;
-    }
-
-    if (!std::filesystem::exists(path)) {
-        std::cerr << "Missing texture: " << path << std::endl;
-        return nullptr;
-    }
-
-    int w = 0, h = 0, n = 0;
-    constexpr int kChannels = 4;
-    const utils::Path absPath = utils::Path(path.string()).getAbsolutePath();
-    uint8_t* data = stbi_load(absPath.c_str(), &w, &h, &n, kChannels);
-    if (!data) {
-        std::cerr << "Failed to load texture: " << path << std::endl;
-        return nullptr;
-    }
-
-    const Texture::InternalFormat format = sRGB
-            ? Texture::InternalFormat::SRGB8_A8
-            : Texture::InternalFormat::RGBA8;
-    Texture* tex = Texture::Builder()
-            .width(static_cast<uint32_t>(w))
-            .height(static_cast<uint32_t>(h))
-            .levels(0xff)
-            .format(format)
-            .usage(Texture::Usage::DEFAULT | Texture::Usage::GEN_MIPMAPPABLE)
-            .build(engine);
-
-    Texture::PixelBufferDescriptor buffer(data,
-            static_cast<size_t>(w) * h * kChannels,
-            Texture::Format::RGBA,
-            Texture::Type::UBYTE,
-            (Texture::PixelBufferDescriptor::Callback) &stbi_image_free);
-    tex->setImage(engine, 0, std::move(buffer));
-    tex->generateMipmaps(engine);
-
-    app.textures[key] = tex;
-    app.ownedTextures.push_back(tex);
-    return tex;
+static filament::pbrtio::PbrtFilamentBuildOptions makeBuildOptions(bool strictPbrt) {
+    filament::pbrtio::PbrtFilamentBuildOptions options;
+    options.materials = {
+            .litData = RESOURCES_AIDEFAULTMAT_DATA,
+            .litSize = RESOURCES_AIDEFAULTMAT_SIZE,
+            .texturedData = RESOURCES_PBRTTEXTURED_DATA,
+            .texturedSize = RESOURCES_PBRTTEXTURED_SIZE,
+            .unlitData = RESOURCES_SANDBOXUNLIT_DATA,
+            .unlitSize = RESOURCES_SANDBOXUNLIT_SIZE,
+    };
+    options.spawnAnalyticLights = !strictPbrt;
+    return options;
 }
 
-static MaterialInstance* getOrCreateMaterial(Engine& engine, App& app,
-        const filament::pbrtio::PbrtMeshInstance& mesh) {
-    const bool textured = !mesh.baseColorTexturePath.empty();
-    const std::string key = textured
-            ? (mesh.materialName + "|" + mesh.baseColorTexturePath.string())
-            : (mesh.materialName.empty()
-                    ? (std::to_string(mesh.baseColor.x) + "," +
-                       std::to_string(mesh.baseColor.y) + "," +
-                       std::to_string(mesh.baseColor.z))
-                    : mesh.materialName);
-
-    auto it = app.materials.find(key);
-    if (it != app.materials.end()) {
-        return it->second;
+static void applyStrictPbrtView(Engine& engine, View& view, Scene& scene, bool strictPbrt) {
+    if (strictPbrt) {
+        scene.setIndirectLight(nullptr);
+        scene.setSkybox(nullptr);
+        view.setAmbientOcclusionOptions({ .enabled = false });
+        view.setBloomOptions({ .enabled = false });
+        view.setScreenSpaceReflectionsOptions({ .enabled = false });
+        view.setFogOptions({ .enabled = false });
+        view.setShadowingEnabled(true);
     }
-
-    MaterialInstance* mi = nullptr;
-    if (textured) {
-        if (Texture* map = loadBaseColorTexture(engine, app, mesh.baseColorTexturePath,
-                mesh.baseColorTextureSRGB)) {
-            Material* material = Material::Builder()
-                    .package(RESOURCES_PBRTTEXTURED_DATA, RESOURCES_PBRTTEXTURED_SIZE)
-                    .build(engine);
-            mi = material->createInstance();
-            TextureSampler sampler(TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
-                    TextureSampler::MagFilter::LINEAR,
-                    TextureSampler::WrapMode::REPEAT);
-            mi->setParameter("baseColorMap", map, sampler);
-            mi->setParameter("baseColor", RgbType::LINEAR, float3(1.f));
-            mi->setParameter("roughness", mesh.roughness);
-            mi->setParameter("metallic", mesh.metallic);
-        }
-    }
-
-    if (!mi) {
-        Material* material = Material::Builder()
-                .package(RESOURCES_AIDEFAULTMAT_DATA, RESOURCES_AIDEFAULTMAT_SIZE)
-                .build(engine);
-        mi = material->createInstance();
-        mi->setParameter("baseColor", RgbType::LINEAR, mesh.baseColor);
-        mi->setParameter("roughness", mesh.roughness);
-        mi->setParameter("metallic", mesh.metallic);
-    }
-
-    app.materials[key] = mi;
-    return mi;
 }
 
 int main(int argc, char** argv) {
     App app;
     app.config.title = "PBRT Kitchen";
-    app.config.iblDirectory = FilamentApp::getRootAssetsPath() + IBL_FOLDER;
+    app.config.iblDirectory = "";
     app.scenePath = DEFAULT_SCENE;
 
     handleCommandLineArguments(argc, argv, &app);
@@ -211,109 +133,74 @@ int main(int argc, char** argv) {
         app.scenePath = argv[utils::getopt::optind];
     }
 
-    filament::pbrtio::PbrtLoadedScene pbrtScene;
-    if (!filament::pbrtio::loadPbrtScene(app.scenePath, pbrtScene)) {
-        std::cerr << "Failed to load PBRT scene: " << app.scenePath << std::endl;
-        return 1;
+    if (!app.strictPbrt) {
+        app.config.iblDirectory = FilamentApp::getRootAssetsPath() + "assets/ibl/lightroom_14b";
     }
-    std::cout << "Loaded " << pbrtScene.meshes.size() << " meshes from "
-              << app.scenePath << std::endl;
 
-    auto setup = [&app, pbrtScene](Engine* engine, View* view, Scene* scene) {
-        app.meshLoader = std::make_unique<MeshAssimp>(*engine);
-        auto& tcm = engine->getTransformManager();
-        auto& rcm = engine->getRenderableManager();
-        auto& em = EntityManager::get();
-
-        size_t loaded = 0;
-        for (const auto& mesh : pbrtScene.meshes) {
-            if (!std::filesystem::exists(mesh.plyPath)) {
-                std::cerr << "Missing mesh: " << mesh.plyPath << std::endl;
-                continue;
-            }
-            MaterialInstance* mi = getOrCreateMaterial(*engine, app, mesh);
-            std::map<std::string, MaterialInstance*> matMap;
-            matMap["DefaultMaterial"] = mi;
-            const size_t before = app.meshLoader->getRenderables().size();
-            app.meshLoader->addFromFile(utils::Path(mesh.plyPath.string()), matMap, true);
-            const auto& renderables = app.meshLoader->getRenderables();
-            if (renderables.size() == before) {
-                std::cerr << "Assimp failed to load: " << mesh.plyPath << std::endl;
-                continue;
-            }
-            for (size_t i = before; i < renderables.size(); ++i) {
-                Entity e = renderables[i];
-                if (!tcm.hasComponent(e)) {
-                    tcm.create(e);
-                }
-                auto ti = tcm.getInstance(e);
-                tcm.setTransform(ti, mesh.transform);
-                if (rcm.hasComponent(e)) {
-                    auto ri = rcm.getInstance(e);
-                    rcm.setCastShadows(ri, true);
-                }
-                scene->addEntity(e);
-            }
-            ++loaded;
+    auto setup = [&app](Engine* engine, View* view, Scene* scene) {
+        app.sceneHost = std::make_unique<filament::pbrtio::PbrtFilamentSceneHost>();
+        if (!app.sceneHost->build(*engine, *scene, app.scenePath, makeBuildOptions(app.strictPbrt))) {
+            std::cerr << "Failed to load PBRT scene: " << app.scenePath << std::endl;
+            app.sceneHost.reset();
+            return;
         }
-        std::cout << "Rendered " << loaded << " / " << pbrtScene.meshes.size()
-                  << " meshes, " << app.textures.size() << " textures." << std::endl;
 
-        if (loaded == 0) {
+        const auto& pbrtScene = app.sceneHost->scene();
+        const auto& result = app.sceneHost->result();
+        filament::pbrtio::printPbrtLoadTimings(pbrtScene.timings);
+        std::cout << "Loaded " << pbrtScene.scene.meshes.size() << " meshes, "
+                  << pbrtScene.scene.areaLights.size() << " rect area lights, "
+                  << pbrtScene.textures.gpu.size() << " textures from "
+                  << app.scenePath << std::endl;
+
+        applyStrictPbrtView(*engine, *view, *scene, app.strictPbrt);
+
+        if (!app.strictPbrt && pbrtScene.scene.environment.valid) {
+            FilamentApp::get().loadIBL(pbrtScene.scene.environment.mapPath.string());
+            std::cout << "Environment map: " << pbrtScene.scene.environment.mapPath << std::endl;
+        } else if (app.strictPbrt) {
+            std::cout << "Strict PBRT mode: IBL disabled, rect area lights + black background."
+                      << std::endl;
+        }
+
+        std::cout << "Rendered " << result.meshesLoaded << " / "
+                  << pbrtScene.scene.meshes.size() << " meshes." << std::endl;
+
+        if (result.meshesLoaded == 0 && pbrtScene.scene.areaLights.empty()) {
             std::cerr << "No geometry loaded. Rebuild assimp (PLY support) and pbrt_kitchen."
                       << std::endl;
             return;
         }
 
-        const float3 bmin = app.meshLoader->minBound;
-        const float3 bmax = app.meshLoader->maxBound;
-        const float3 center = (bmin + bmax) * 0.5f;
-        const float radius = std::max(length(bmax - bmin) * 0.5f, 0.1f);
+        std::cout << "Scene analytic lights: " << result.analyticLightCount
+                  << ", rect area lights: " << result.rectAreaLightCount
+                  << std::endl;
 
-        app.lights.push_back(em.create());
-        LightManager::Builder(LightManager::Type::SUN)
-                .color(Color::toLinear<ACCURATE>(sRGBColor(0.98f, 0.95f, 0.88f)))
-                .intensity(110000)
-                .direction(normalize(float3{ 0.5f, -1.f, -0.3f }))
-                .castShadows(true)
-                .build(*engine, app.lights.back());
-        scene->addEntity(app.lights.back());
-
-        view->setAmbientOcclusionOptions({ .enabled = true });
-        view->setBloomOptions({ .enabled = true });
-
-        const float dist = radius * 2.5f;
-        const float3 eye = center + float3(0.f, dist * 0.35f, dist);
+        const filament::pbrtio::PbrtCameraSettings& cam = pbrtScene.scene.camera;
         Camera& camera = view->getCamera();
         camera.setExposure(16.f, 1.f / 125.f, 100.f);
-        camera.lookAt(eye, center);
-        FilamentApp::get().setCameraNearFar(radius * 0.01f, radius * 20.f);
+        camera.setProjection(cam.verticalFovDegrees, cam.aspectRatio, cam.nearPlane, cam.farPlane,
+                Camera::Fov::VERTICAL);
+        camera.lookAt(cam.eye, cam.target, cam.up);
+        FilamentApp::get().setCameraNearFar(cam.nearPlane, cam.farPlane);
     };
 
-    auto preRender = [](Engine*, View*, Scene*, Renderer* renderer) {
-        if (!FilamentApp::get().getIBL()) {
+    auto preRender = [&app](Engine*, View*, Scene*, Renderer* renderer) {
+        renderer->setClearOptions({
+                .clearColor = { 0.f, 0.f, 0.f, 1.f },
+                .clear = true });
+        if (!app.strictPbrt && !FilamentApp::get().getIBL()) {
             renderer->setClearOptions({
-                    .clearColor = { 0.1f, 0.1f, 0.12f, 1.0f },
+                    .clearColor = { 0.1f, 0.1f, 0.12f, 1.f },
                     .clear = true });
         }
     };
 
-    auto cleanup = [&app](Engine* engine, View*, Scene*) {
-        for (auto& [_, mi] : app.materials) {
-            engine->destroy(mi);
+    auto cleanup = [&app](Engine* engine, View*, Scene* scene) {
+        if (app.sceneHost) {
+            app.sceneHost->destroy(*engine, *scene);
+            app.sceneHost.reset();
         }
-        app.materials.clear();
-        for (Texture* tex : app.ownedTextures) {
-            engine->destroy(tex);
-        }
-        app.ownedTextures.clear();
-        app.textures.clear();
-        app.meshLoader.reset();
-        for (Entity e : app.lights) {
-            engine->destroy(e);
-            EntityManager::get().destroy(e);
-        }
-        app.lights.clear();
     };
 
     FilamentApp::get().run(app.config, setup, cleanup, {}, preRender);

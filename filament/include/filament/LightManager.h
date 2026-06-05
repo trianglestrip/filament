@@ -198,6 +198,7 @@ public:
         POINT,          //!< Point light, emits light from a position, in all directions.
         FOCUSED_SPOT,   //!< Physically correct spot light.
         SPOT,           //!< Spot light with coupling of outer cone and illumination disabled.
+        RECT,           //!< Rectangular area light (oriented quad, one-sided emitter).
     };
 
     /**
@@ -717,6 +718,16 @@ public:
     bool isSpotLight(Instance const i) const noexcept {
         Type const type = getType(i);
         return type == Type::SPOT || type == Type::FOCUSED_SPOT;
+    }
+
+    /**
+     * Helper function that returns if a light is a rectangular area light
+     *
+     * @param i     Instance of the component obtained from getInstance().
+     * @return      true if this light is a Type::RECT area light
+     */
+    bool isRectLight(Instance const i) const noexcept {
+        return getType(i) == Type::RECT;
     }
 
     /**

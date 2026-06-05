@@ -9,6 +9,7 @@
 
 #define LIGHT_TYPE_POINT            0u
 #define LIGHT_TYPE_SPOT             1u
+#define LIGHT_TYPE_RECT             2u
 
 
 struct FroxelParams {
@@ -154,8 +155,10 @@ Light getLight(const uint lightIndex) {
     light.worldPosition = positionFalloff.xyz;
     light.channels = int(channels);
     light.contactShadows = bool(typeShadow & 0x10u);
+    light.rectEdge1 = vec3(0.0);
+    light.rectEdge2 = vec3(0.0);
 #if defined(VARIANT_HAS_DYNAMIC_LIGHTING)
-    light.lightType = (typeShadow & 0x1u);
+    light.lightType = (typeShadow & 0xFu);
 #if defined(VARIANT_HAS_SHADOWING)
     light.shadowIndex = int((typeShadow >>  8u) & 0xFFu);
     light.castsShadows   = bool(channels & 0x10000u);
@@ -165,9 +168,57 @@ Light getLight(const uint lightIndex) {
 #endif
     if (light.lightType == LIGHT_TYPE_SPOT) {
         light.attenuation *= getAngleAttenuation(-direction, light.l, scaleOffset);
+    } else if (light.lightType == LIGHT_TYPE_RECT) {
+        light.rectEdge1 = vec3(data[1].w, scaleOffset.x, scaleOffset.y);
+        vec2 e2yz = unpackHalf2x16(typeShadow >> 16u);
+        light.rectEdge2 = vec3(data[3][0], e2yz.x, e2yz.y);
+        light.attenuation = getDistanceAttenuation(posToLight, positionFalloff.w);
     }
 #endif
     return light;
+}
+
+float rectEdgeIrradiance(vec3 N, vec3 P, vec3 v0, vec3 v1) {
+    vec3 L0 = v0 - P;
+    vec3 L1 = v1 - P;
+    vec3 dir0 = normalize(L0);
+    vec3 dir1 = normalize(L1);
+    float cos0 = dot(N, dir0);
+    float cos1 = dot(N, dir1);
+    float sin0 = length(cross(N, dir0));
+    float sin1 = length(cross(N, dir1));
+    float comp = acos(clamp(dot(dir0, dir1), -1.0, 1.0));
+    if (abs(sin0) < 1e-5 || abs(sin1) < 1e-5) {
+        return 0.0;
+    }
+    return (comp - sin0 * cos0 - sin1 * cos1) * (0.5 / PI);
+}
+
+vec3 evaluateRectAreaLight(const PixelParams pixel, const Light light) {
+    vec3 N = shading_normal;
+    vec3 P = getWorldPosition();
+    vec3 c = light.worldPosition;
+    vec3 e1 = light.rectEdge1;
+    vec3 e2 = light.rectEdge2;
+    vec3 n = light.direction;
+
+    vec3 toCenter = c - P;
+    if (dot(n, toCenter) <= 0.0) {
+        return vec3(0.0);
+    }
+
+    vec3 v0 = c - e1 - e2;
+    vec3 v1 = c + e1 - e2;
+    vec3 v2 = c + e1 + e2;
+    vec3 v3 = c - e1 + e2;
+
+    float irradiance = 0.0;
+    irradiance += rectEdgeIrradiance(N, P, v0, v1);
+    irradiance += rectEdgeIrradiance(N, P, v1, v2);
+    irradiance += rectEdgeIrradiance(N, P, v2, v3);
+    irradiance += rectEdgeIrradiance(N, P, v3, v0);
+
+    return light.colorIntensity.rgb * light.colorIntensity.w * irradiance * pixel.diffuseColor;
 }
 
 /**
@@ -201,7 +252,8 @@ void evaluatePunctualLights(const MaterialInputs material,
         }
 
 #if defined(MATERIAL_CAN_SKIP_LIGHTING)
-        if (light.NoL <= 0.0 || light.attenuation <= 0.0) {
+        if (light.lightType != LIGHT_TYPE_RECT &&
+                (light.NoL <= 0.0 || light.attenuation <= 0.0)) {
             continue;
         }
 #endif
@@ -242,7 +294,11 @@ void evaluatePunctualLights(const MaterialInputs material,
 #if defined(MATERIAL_HAS_CUSTOM_SURFACE_SHADING)
         color.rgb += customSurfaceShading(material, pixel, light, visibility);
 #else
-        color.rgb += surfaceShading(pixel, light, visibility);
+        if (light.lightType == LIGHT_TYPE_RECT) {
+            color.rgb += evaluateRectAreaLight(pixel, light) * visibility;
+        } else {
+            color.rgb += surfaceShading(pixel, light, visibility);
+        }
 #endif
     }
 

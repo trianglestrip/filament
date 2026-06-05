@@ -16,12 +16,8 @@ namespace filament::pbrtio {
 using namespace filament::pbrt;
 using namespace filament::math;
 
-static const mat4f kPbrtToFilament = mat4f(
-        1.f, 0.f, 0.f, 0.f,
-        0.f, 0.f, 1.f, 0.f,
-        0.f, 1.f, 0.f, 0.f,
-        0.f, 0.f, 0.f, 1.f);
-
+// PBRT: Y-up, camera looks +Z. Filament: Y-up, camera looks -Z.
+// Match Falcor PBRTImporter: world transforms use pbrt matrix with Z inversion only.
 static const mat4f kInvertZ = mat4f(
         1.f, 0.f,  0.f, 0.f,
         0.f, 1.f,  0.f, 0.f,
@@ -30,6 +26,38 @@ static const mat4f kInvertZ = mat4f(
 
 static float3 spectrumToColor(const Spectrum& spectrum) {
     return spectrumToRGB(spectrum);
+}
+
+static mat4f pbrtToFilamentTransform(const mat4f& pbrtTransform) {
+    return pbrtTransform * kInvertZ;
+}
+
+static float3 transformPoint(const mat4f& m, const float3& p) {
+    return (m * float4(p, 1.f)).xyz;
+}
+
+static float3 transformVector(const mat4f& m, const float3& v) {
+    return (m * float4(v, 0.f)).xyz;
+}
+
+static void extractCamera(const BasicScene& scene, float sceneRadius, PbrtCameraSettings& camera) {
+    const auto& cam = scene.getCamera();
+    const mat4f worldFromCamera = pbrtToFilamentTransform(cam.transform);
+
+    camera.eye = transformPoint(worldFromCamera, float3(0.f));
+    // PBRT camera looks along +Z; Filament looks along -Z after axis remap.
+    camera.target = transformPoint(worldFromCamera, float3(0.f, 0.f, 1.f));
+    camera.up = normalize(transformVector(worldFromCamera, float3(0.f, 1.f, 0.f)));
+    camera.verticalFovDegrees = cam.params.getFloat("fov", 45.f);
+
+    const auto& film = scene.getFilm();
+    const int xres = film.params.getInt("xresolution", 1280);
+    const int yres = film.params.getInt("yresolution", 720);
+    camera.aspectRatio = yres > 0 ? static_cast<float>(xres) / static_cast<float>(yres) : (16.f / 9.f);
+
+    const float radius = std::max(sceneRadius, 0.1f);
+    camera.nearPlane = radius * 0.01f;
+    camera.farPlane = radius * 20.f;
 }
 
 static std::filesystem::path resolveSpectrumImagePath(const BasicScene& scene,
@@ -53,6 +81,144 @@ static std::filesystem::path resolveSpectrumImagePath(const BasicScene& scene,
         outSRGB = true;
     }
     return scene.resolvePath(filename);
+}
+
+static void addDistantLight(const BasicScene& scene, const LightSceneEntity& entity,
+        std::vector<PbrtLightInstance>& lights) {
+    if (entity.name != "distant") {
+        return;
+    }
+    const auto& params = entity.params;
+    const mat4f xf = pbrtToFilamentTransform(entity.transform);
+
+    PbrtLightInstance light;
+    light.type = PbrtLightType::Directional;
+    light.color = spectrumToColor(params.getSpectrum("L", Spectrum(float3(1.f)),
+            [&](const std::filesystem::path& p) { return scene.resolvePath(p); }));
+    const float scale = params.getFloat("scale", 1.f);
+    const float illuminance = params.getFloat("illuminance", -1.f);
+    light.intensity = scale * (illuminance > 0.f ? illuminance : 110000.f);
+
+    const float3 from = params.getPoint3("from", float3(0.f));
+    const float3 to = params.getPoint3("to", float3(0.f, 0.f, 1.f));
+    light.direction = normalize(transformVector(xf, to - from));
+    light.castShadows = true;
+    lights.push_back(light);
+}
+
+static bool tryAddRectAreaLight(const BasicScene& scene, const ShapeSceneEntity& shape,
+        std::vector<PbrtRectAreaLight>& areaLights) {
+    if (shape.lightIndex < 0) {
+        return false;
+    }
+    if (shape.name != "trianglemesh" && shape.name != "bilinearmesh") {
+        return false;
+    }
+
+    const SceneEntity& area = scene.getAreaLight(shape.lightIndex);
+    if (area.name != "diffuse") {
+        return false;
+    }
+
+    const auto& params = shape.params;
+    const std::vector<float3> points = params.getPoint3Array("P");
+    if (points.size() < 3) {
+        return false;
+    }
+
+    const mat4f xf = pbrtToFilamentTransform(shape.transform);
+    std::vector<float3> worldPoints;
+    worldPoints.reserve(points.size());
+    for (const float3& p : points) {
+        worldPoints.push_back(transformPoint(xf, p));
+    }
+
+    PbrtRectAreaLight areaMesh;
+    const size_t vertexCount = std::min(worldPoints.size(), size_t(4));
+    for (size_t i = 0; i < vertexCount; ++i) {
+        areaMesh.positions[i] = worldPoints[i];
+    }
+    if (vertexCount == 3) {
+        areaMesh.positions[3] = worldPoints[2];
+        areaMesh.indices[0] = 0;
+        areaMesh.indices[1] = 1;
+        areaMesh.indices[2] = 2;
+        areaMesh.indices[3] = 0;
+        areaMesh.indices[4] = 2;
+        areaMesh.indices[5] = 0;
+    } else if (params.hasInt("indices")) {
+        const auto& idx = params.getIntArray("indices");
+        if (idx.size() >= 6) {
+            for (int i = 0; i < 6; ++i) {
+                areaMesh.indices[i] = static_cast<uint16_t>(idx[i]);
+            }
+        }
+    }
+
+    const float3 p0 = areaMesh.positions[0];
+    const float3 p1 = areaMesh.positions[1];
+    const float3 p2 = areaMesh.positions[2];
+    const float3 p3 = areaMesh.positions[3];
+    const float3 e1 = p1 - p0;
+    const float3 e2 = p3 - p0;
+    areaMesh.normal = normalize(cross(e1, e2));
+    areaMesh.width = length(e1);
+    areaMesh.height = length(e2);
+    areaMesh.center = (p0 + p1 + p2 + p3) * 0.25f;
+
+    areaMesh.radiance = spectrumToColor(area.params.getSpectrum("L", Spectrum(float3(1.f)),
+            [&](const std::filesystem::path& p) { return scene.resolvePath(p); }));
+    areaMesh.scale = area.params.getFloat("scale", 1.f);
+    areaLights.push_back(areaMesh);
+    return true;
+}
+
+static void addInfiniteLight(const BasicScene& scene, const LightSceneEntity& entity,
+        PbrtEnvironmentLight& environment) {
+    if (entity.name != "infinite") {
+        return;
+    }
+    const auto& params = entity.params;
+    bool sRGB = true;
+    if (params.hasTexture("L")) {
+        environment.mapPath = resolveSpectrumImagePath(scene, params.getTexture("L"), sRGB);
+        environment.scale = params.getFloat("scale", 1.f);
+        environment.valid = !environment.mapPath.empty();
+    }
+}
+
+static void collectLights(const BasicScene& scene, const std::vector<ShapeSceneEntity>& shapes,
+        PbrtLoadedScene& out) {
+    out.lights.clear();
+    out.areaLights.clear();
+    out.environment = {};
+    for (const auto& entity : scene.getLights()) {
+        addDistantLight(scene, entity, out.lights);
+        addInfiniteLight(scene, entity, out.environment);
+    }
+    for (const auto& shape : shapes) {
+        tryAddRectAreaLight(scene, shape, out.areaLights);
+    }
+}
+
+static void collectAllShapes(const BasicScene& scene, std::vector<ShapeSceneEntity>& out) {
+    out = scene.getShapes();
+    for (const auto& [_, def] : scene.getInstanceDefinitions()) {
+        for (const auto& shape : def.shapes) {
+            out.push_back(shape);
+        }
+    }
+    for (const auto& instance : scene.getInstances()) {
+        auto it = scene.getInstanceDefinitions().find(instance.name);
+        if (it == scene.getInstanceDefinitions().end()) {
+            continue;
+        }
+        for (const auto& shape : it->second.shapes) {
+            ShapeSceneEntity instShape = shape;
+            instShape.transform = instance.transform * shape.transform;
+            out.push_back(instShape);
+        }
+    }
 }
 
 static void resolveMaterial(const BasicScene& scene, const MaterialRef& ref,
@@ -101,7 +267,7 @@ static void addShape(const BasicScene& scene, const ShapeSceneEntity& shape,
 
     PbrtMeshInstance inst;
     inst.plyPath = scene.resolvePath(filename);
-    inst.transform = kPbrtToFilament * shape.transform * kInvertZ;
+    inst.transform = pbrtToFilamentTransform(shape.transform);
 
     if (!std::holds_alternative<std::monostate>(shape.materialRef)) {
         if (const auto* name = std::get_if<std::string>(&shape.materialRef)) {
@@ -147,9 +313,9 @@ bool loadPbrtScene(const std::filesystem::path& pbrtPath, PbrtLoadedScene& out) 
         }
     }
 
-    const auto& cam = scene.getCamera();
-    out.cameraTransform = kPbrtToFilament * cam.transform * kInvertZ;
-    out.cameraFov = cam.params.getFloat("fov", 45.f);
+    std::vector<ShapeSceneEntity> allShapes;
+    collectAllShapes(scene, allShapes);
+    collectLights(scene, allShapes, out);
 
     float3 bmin(1e30f), bmax(-1e30f);
     for (const auto& mesh : out.meshes) {
@@ -164,6 +330,17 @@ bool loadPbrtScene(const std::filesystem::path& pbrtPath, PbrtLoadedScene& out) 
     } else {
         out.sceneCenter = (bmin + bmax) * 0.5f;
         out.sceneRadius = std::max(length(bmax - bmin) * 0.5f, 0.5f);
+    }
+
+    extractCamera(scene, out.sceneRadius, out.camera);
+
+    // Fallback camera when PBRT camera transform is degenerate.
+    if (!std::isfinite(length(out.camera.target - out.camera.eye)) ||
+            length(out.camera.target - out.camera.eye) < 1e-4f) {
+        const float dist = out.sceneRadius * 2.5f;
+        out.camera.eye = out.sceneCenter + float3(0.f, dist * 0.35f, dist);
+        out.camera.target = out.sceneCenter;
+        out.camera.up = float3(0.f, 1.f, 0.f);
     }
 
     return !out.meshes.empty();

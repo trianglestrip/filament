@@ -29,6 +29,8 @@
 
 #include <private/filament/UibStructs.h>
 
+#include <math/half.h>
+
 #include <filament/Box.h>
 #include <filament/LightManager.h>
 #include <filament/RenderableManager.h>
@@ -255,17 +257,31 @@ void FScene::prepare(JobSystem& js,
             mat4f const shaderWorldTransform{
                     worldTransform * tcm.getWorldTransformAccurate(ti) };
             float4 const position = shaderWorldTransform * float4{ lcm.getLocalPosition(li), 1 };
-            float3 d = 0;
-            if (!lcm.isPointLight(li) || lcm.isIESLight(li)) {
-                d = lcm.getLocalDirection(li);
-                // using mat3f::getTransformForNormals handles non-uniform scaling
-                d = normalize(mat3f::getTransformForNormals(shaderWorldTransform.upperLeft()) * d);
-            }
             size_t const index = DIRECTIONAL_LIGHTS_COUNT + std::distance(first, p) + i;
             assert_invariant(index < lightData.size());
-            lightData.elementAt<POSITION_RADIUS>(index) = float4{ position.xyz, lcm.getRadius(li) };
-            lightData.elementAt<DIRECTION>(index) = d;
-            lightData.elementAt<SPOT_PARAMS>(index) = float2{lcm.getCosOuterSquared(li), lcm.getSinInverse(li)};
+            if (lcm.isRectLight(li)) {
+                float3 const edge1 = float3(shaderWorldTransform[0]);
+                float3 const edge2 = float3(shaderWorldTransform[1]);
+                float3 const n = normalize(float3(shaderWorldTransform[2]));
+                float const radius = std::max(length(edge1), length(edge2));
+                lightData.elementAt<POSITION_RADIUS>(index) = float4{ position.xyz, radius };
+                lightData.elementAt<DIRECTION>(index) = n;
+                lightData.elementAt<SHADOW_DIRECTION>(index) = edge1;
+                lightData.elementAt<SHADOW_REF>(index) = math::double2{ edge2.x, edge2.y };
+                lightData.elementAt<SPOT_PARAMS>(index) =
+                        float2{ edge2.z, std::numeric_limits<float>::infinity() };
+            } else {
+                float3 d = 0;
+                if (!lcm.isPointLight(li) || lcm.isIESLight(li)) {
+                    d = lcm.getLocalDirection(li);
+                    // using mat3f::getTransformForNormals handles non-uniform scaling
+                    d = normalize(mat3f::getTransformForNormals(shaderWorldTransform.upperLeft()) * d);
+                }
+                lightData.elementAt<POSITION_RADIUS>(index) = float4{ position.xyz, lcm.getRadius(li) };
+                lightData.elementAt<DIRECTION>(index) = d;
+                lightData.elementAt<SPOT_PARAMS>(index) =
+                        float2{ lcm.getCosOuterSquared(li), lcm.getSinInverse(li) };
+            }
             lightData.elementAt<LIGHT_ENTITY>(index) = li ? lcm.getEntity(li) : utils::Entity{};
         }
     };
@@ -442,6 +458,9 @@ void FScene::prepareDynamicLights(const CameraInfo& camera,
     LightsUib* const lp = driver.allocatePod<LightsUib>(positionalLightCount);
 
     auto const* UTILS_RESTRICT directions       = lightData.data<DIRECTION>();
+    auto const* UTILS_RESTRICT rectEdge1      = lightData.data<SHADOW_DIRECTION>();
+    auto const* UTILS_RESTRICT rectEdge2xy    = lightData.data<SHADOW_REF>();
+    auto const* UTILS_RESTRICT rectEdge2z     = lightData.data<SPOT_PARAMS>();
     auto const* UTILS_RESTRICT entities         = lightData.data<LIGHT_ENTITY>();
     auto const* UTILS_RESTRICT shadowInfo       = lightData.data<SHADOW_INFO>();
     for (size_t i = DIRECTIONAL_LIGHTS_COUNT, c = size; i < c; ++i) {
@@ -449,15 +468,28 @@ void FScene::prepareDynamicLights(const CameraInfo& camera,
         auto const li = lcm.getInstance(entities[i]);
         lp[gpuIndex].positionFalloff      = { spheres[i].xyz, lcm.getSquaredFalloffInv(li) };
         lp[gpuIndex].direction            = directions[i];
-        lp[gpuIndex].reserved1            = {};
         lp[gpuIndex].colorIES             = { lcm.getColor(li), 0.0f };
-        lp[gpuIndex].spotScaleOffset      = lcm.getSpotParams(li).scaleOffset;
-        lp[gpuIndex].reserved3            = {};
         lp[gpuIndex].intensity            = lcm.getIntensity(li);
-        lp[gpuIndex].typeShadow           = LightsUib::packTypeShadow(
-                lcm.isPointLight(li) ? 0u : 1u,
-                shadowInfo[i].contactShadows,
-                shadowInfo[i].index);
+        if (lcm.isRectLight(li)) {
+            float3 const e1 = rectEdge1[i];
+            float3 const e2 = { float(rectEdge2xy[i].x), float(rectEdge2xy[i].y), rectEdge2z[i].x };
+            math::half const hy(e2.y);
+            math::half const hz(e2.z);
+            uint32_t const edge2yzPacked = (uint32_t(uint16_t(hy)) << 16) | uint32_t(uint16_t(hz));
+            lp[gpuIndex].reserved1        = e1.x;
+            lp[gpuIndex].spotScaleOffset  = { e1.y, e1.z };
+            lp[gpuIndex].reserved3        = e2.x;
+            lp[gpuIndex].typeShadow       = LightsUib::packTypeShadow(2u,
+                    shadowInfo[i].contactShadows, shadowInfo[i].index) | (edge2yzPacked << 16u);
+        } else {
+            lp[gpuIndex].reserved1        = {};
+            lp[gpuIndex].spotScaleOffset  = lcm.getSpotParams(li).scaleOffset;
+            lp[gpuIndex].reserved3        = {};
+            lp[gpuIndex].typeShadow       = LightsUib::packTypeShadow(
+                    lcm.isPointLight(li) ? 0u : 1u,
+                    shadowInfo[i].contactShadows,
+                    shadowInfo[i].index);
+        }
         lp[gpuIndex].channels             = LightsUib::packChannels(
                 lcm.getLightChannels(li),
                 shadowInfo[i].castsShadows);

@@ -157,6 +157,10 @@ public:
         return type == Type::FOCUSED_SPOT || type == Type::SPOT;
     }
 
+    bool isRectLight(Instance const i) const noexcept {
+        return getType(i) == Type::RECT;
+    }
+
     bool isDirectionalLight(Instance const i) const noexcept {
         Type const type = getType(i);
         return type == Type::DIRECTIONAL || type == Type::SUN;

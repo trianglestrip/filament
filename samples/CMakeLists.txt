@@ -241,6 +241,18 @@ target_link_libraries(samples-common filament)
 set_target_properties(samples-common PROPERTIES FOLDER Samples/Common)
 
 # ==================================================================================================
+# PBRT Filament scene host (requires filamentapp for MeshAssimp)
+# ==================================================================================================
+
+set(PBRTIO_DIR ${ROOT_DIR}/libs/pbrtio)
+add_library(pbrtio-filament STATIC
+    ${PBRTIO_DIR}/src/PbrtFilamentSceneHost.cpp
+)
+target_include_directories(pbrtio-filament PUBLIC ${PBRTIO_DIR}/include)
+target_link_libraries(pbrtio-filament PUBLIC pbrtio filamentapp)
+set_target_properties(pbrtio-filament PROPERTIES FOLDER Samples/Common)
+
+# ==================================================================================================
 # Compiler flags
 # ==================================================================================================
 
@@ -324,8 +336,7 @@ if (NOT ANDROID)
     target_link_libraries(sample_cloth PRIVATE filameshio)
     target_link_libraries(sample_normal_map PRIVATE filameshio)
     target_link_libraries(suzanne PRIVATE filameshio suzanne-resources)
-    target_link_libraries(pbrt_kitchen PRIVATE pbrtio assimp stb)
-    add_dependencies(pbrt_kitchen envs)
+    target_link_libraries(pbrt_kitchen PRIVATE pbrtio-filament sample-resources)
 
     if (FILAMENT_DISABLE_MATOPT)
         add_definitions(-DFILAMENT_DISABLE_MATOPT=1)

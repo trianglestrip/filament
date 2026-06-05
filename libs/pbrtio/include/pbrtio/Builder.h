@@ -253,6 +253,7 @@ public:
     void addInstances(std::vector<InstanceSceneEntity>& instances);
 
     const CameraSceneEntity& getCamera() const { return mCamera; }
+    const SceneEntity& getFilm() const { return mFilm; }
 
     const std::map<std::string, MaterialSceneEntity>& getNamedMaterials() const { return mNamedMaterials; }
     const std::vector<MaterialSceneEntity>& getMaterials() const { return mMaterials; }
@@ -269,7 +270,7 @@ public:
      */
     const MaterialSceneEntity& getMaterial(const MaterialRef& materialRef) const;
 
-    const SceneEntity& getAreaLight(int lightIndex);
+    const SceneEntity& getAreaLight(int lightIndex) const;
 
     std::filesystem::path resolvePath(const std::filesystem::path& path) const;
 
