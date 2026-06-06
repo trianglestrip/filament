@@ -10,16 +10,52 @@ material {
             name : baseColor
         },
         {
+            type : float4,
+            name : baseColorUvTransform
+        },
+        {
+            type : float4,
+            name : roughnessUvTransform
+        },
+        {
             type : float,
             name : roughness
+        },
+        {
+            type : float,
+            name : roughnessScale
         },
         {
             type : float,
             name : metallic
         },
         {
+            type : float,
+            name : clearCoat
+        },
+        {
+            type : float,
+            name : clearCoatRoughness
+        },
+        {
+            type : float,
+            name : hasBaseColorMap
+        },
+        {
+            type : float,
+            name : hasRoughnessMap
+        },
+        {
+            type : float,
+            name : roughnessMapsClearCoat
+        },
+        {
             type : sampler2d,
             name : baseColorMap
+        },
+        {
+            type : sampler2d,
+            name : roughnessMap
         }
     ],
 }
@@ -27,9 +63,35 @@ material {
 fragment {
     void material(inout MaterialInputs material) {
         prepareMaterial(material);
-        material.baseColor = texture(materialParams_baseColorMap, getUV0());
-        material.baseColor.rgb *= materialParams.baseColor;
+
+        float2 uv = getUV0() * materialParams.baseColorUvTransform.xy +
+                materialParams.baseColorUvTransform.zw;
+        uv.x = 1.0 - uv.x;
+
+        float3 color = materialParams.baseColor;
+        if (materialParams.hasBaseColorMap > 0.5) {
+            color = texture(materialParams_baseColorMap, uv).rgb * materialParams.baseColor;
+        }
+
+        float roughness = materialParams.roughness;
+        float clearCoatRoughness = materialParams.clearCoatRoughness;
+        if (materialParams.hasRoughnessMap > 0.5) {
+            float2 ruv = getUV0() * materialParams.roughnessUvTransform.xy +
+                    materialParams.roughnessUvTransform.zw;
+            ruv.x = 1.0 - ruv.x;
+            float mappedRoughness =
+                    texture(materialParams_roughnessMap, ruv).r * materialParams.roughnessScale;
+            if (materialParams.roughnessMapsClearCoat > 0.5) {
+                clearCoatRoughness = mappedRoughness;
+            } else {
+                roughness = mappedRoughness;
+            }
+        }
+
+        material.baseColor.rgb = color;
         material.metallic = materialParams.metallic;
-        material.roughness = materialParams.roughness;
+        material.roughness = roughness;
+        material.clearCoat = materialParams.clearCoat;
+        material.clearCoatRoughness = clearCoatRoughness;
     }
 }

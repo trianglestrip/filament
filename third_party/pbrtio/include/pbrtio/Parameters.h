@@ -41,7 +41,7 @@
 #include <string_view>
 #include <vector>
 
-namespace filament::pbrt
+namespace pbrtio::pbrt
 {
 
 class ParsedParameter
@@ -161,4 +161,4 @@ private:
     const RGBColorSpace* mpColorSpace;
 };
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

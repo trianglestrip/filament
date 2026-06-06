@@ -5,7 +5,7 @@
 
 #include "common/arguments.h"
 
-#include <pbrtio/PbrtFilamentSceneHost.h>
+#include "PbrtFilamentSceneHost.h"
 
 #include <filament/Camera.h>
 #include <filament/Engine.h>
@@ -14,6 +14,8 @@
 #include <filament/Renderer.h>
 #include <filament/Scene.h>
 #include <filament/View.h>
+
+#include <camutils/Manipulator.h>
 
 #include <filamentapp/Config.h>
 #include <filamentapp/FilamentApp.h>
@@ -43,7 +45,7 @@ struct App {
     bool enableBloom = false;
     bool enableSSR = false;
     bool enableFog = false;
-    bool autoExposure = true;
+    bool autoExposure = false;
     float aperture = 4.0f;
     float shutterSpeed = 30.0f;
     float sensitivity = 400.0f;
@@ -60,11 +62,17 @@ struct App {
     View::AmbientOcclusionOptions aoOptions{};
     View::BloomOptions bloomOptions{};
     float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    bool hasPbrtCamera = false;
+    ::pbrtio::PbrtCameraSettings pbrtCamera;
     std::unique_ptr<filament::pbrtio::PbrtFilamentSceneHost> sceneHost;
 };
 
 static const char* DEFAULT_SCENE =
         "D:/gitProject/VLR_WF/models/kitchen/scene-v4.pbrt";
+
+static filament::math::float3 toFilament(const ::pbrtio::pbrt::float3& v) {
+    return filament::math::float3(v.x, v.y, v.z);
+}
 
 static void setStrictPreset(App& app) {
     app.strictPbrt = true;
@@ -73,7 +81,7 @@ static void setStrictPreset(App& app) {
     app.enableBloom = false;
     app.enableSSR = false;
     app.enableFog = false;
-    app.autoExposure = true;
+    app.autoExposure = false;
     app.aperture = 4.0f;
     app.shutterSpeed = 30.0f;
     app.sensitivity = 400.0f;
@@ -100,7 +108,7 @@ static void setPreviewPreset(App& app) {
     app.enableBloom = false;
     app.enableSSR = false;
     app.enableFog = false;
-    app.autoExposure = true;
+    app.autoExposure = false;
     app.aperture = 8.0f;
     app.shutterSpeed = 125.0f;
     app.sensitivity = 100.0f;
@@ -251,6 +259,29 @@ static void applyPbrtView(App& app, View& view, Scene& scene) {
     }
 }
 
+static void applyPbrtCameraProjection(App& app, View& view) {
+    if (!app.hasPbrtCamera) {
+        return;
+    }
+
+    const ::pbrtio::PbrtCameraSettings& cam = app.pbrtCamera;
+    Camera& camera = view.getCamera();
+    camera.setProjection(cam.verticalFovDegrees, cam.aspectRatio, cam.nearPlane, cam.farPlane,
+            Camera::Fov::VERTICAL);
+    FilamentApp::get().setCameraNearFar(cam.nearPlane, cam.farPlane);
+}
+
+static void resetPbrtCameraManipulator(App& app, View& view) {
+    if (!app.hasPbrtCamera) {
+        return;
+    }
+
+    const ::pbrtio::PbrtCameraSettings& cam = app.pbrtCamera;
+    applyPbrtCameraProjection(app, view);
+    FilamentApp::get().resetCameraManipulator(toFilament(cam.eye), toFilament(cam.target),
+            toFilament(cam.up), cam.verticalFovDegrees, cam.farPlane);
+}
+
 static void renderPbrtKitchenGui(App& app, Engine*, View*) {
     ImGui::SetNextWindowSize(ImVec2(330, 0), ImGuiCond_FirstUseEver);
     ImGui::Begin("PBRT Kitchen");
@@ -329,6 +360,7 @@ int main(int argc, char** argv) {
     App app;
     app.config.title = "PBRT Kitchen";
     app.config.iblDirectory = "";
+    app.config.cameraMode = filament::camutils::Mode::FREE_FLIGHT;
     app.scenePath = DEFAULT_SCENE;
 
     handleCommandLineArguments(argc, argv, &app);
@@ -369,10 +401,10 @@ int main(int argc, char** argv) {
             app.rectLightAverageLuminance = static_cast<float>(
                     luminanceSum / double(pbrtScene.scene.areaLights.size()));
         }
-        filament::pbrtio::printPbrtLoadTimings(pbrtScene.timings);
+        ::pbrtio::printPbrtLoadTimings(pbrtScene.timings);
         std::cout << "Loaded " << pbrtScene.scene.meshes.size() << " meshes, "
                   << pbrtScene.scene.areaLights.size() << " rect area lights, "
-                  << pbrtScene.textures.gpu.size() << " textures from "
+                  << pbrtScene.textures.decoded.size() << " textures from "
                   << app.scenePath << std::endl;
 
         if (!app.strictPbrt && pbrtScene.scene.environment.valid) {
@@ -397,13 +429,19 @@ int main(int argc, char** argv) {
                   << ", rect area lights: " << result.rectAreaLightCount
                   << std::endl;
 
-        const filament::pbrtio::PbrtCameraSettings& cam = pbrtScene.scene.camera;
-        Camera& camera = view->getCamera();
-        camera.setExposure(app.aperture, 1.f / app.shutterSpeed, app.sensitivity);
-        camera.setProjection(cam.verticalFovDegrees, cam.aspectRatio, cam.nearPlane, cam.farPlane,
-                Camera::Fov::VERTICAL);
-        camera.lookAt(cam.eye, cam.target, cam.up);
-        FilamentApp::get().setCameraNearFar(cam.nearPlane, cam.farPlane);
+        const ::pbrtio::PbrtCameraSettings& cam = pbrtScene.scene.camera;
+        app.pbrtCamera = cam;
+        app.hasPbrtCamera = true;
+        std::cout << "PBRT camera eye=(" << cam.eye.x << ", " << cam.eye.y << ", "
+                  << cam.eye.z << ") target=(" << cam.target.x << ", " << cam.target.y
+                  << ", " << cam.target.z << ") up=(" << cam.up.x << ", " << cam.up.y
+                  << ", " << cam.up.z << ") fov=" << cam.verticalFovDegrees
+                  << " near=" << cam.nearPlane << " far=" << cam.farPlane << std::endl;
+        std::cout << "PBRT scene center=(" << pbrtScene.scene.sceneCenter.x << ", "
+                  << pbrtScene.scene.sceneCenter.y << ", " << pbrtScene.scene.sceneCenter.z
+                  << ") radius=" << pbrtScene.scene.sceneRadius << std::endl;
+        view->getCamera().setExposure(app.aperture, 1.f / app.shutterSpeed, app.sensitivity);
+        resetPbrtCameraManipulator(app, *view);
         applyPbrtView(app, *view, *scene);
     };
 
@@ -412,6 +450,7 @@ int main(int argc, char** argv) {
     };
 
     auto preRender = [&app](Engine*, View* view, Scene* scene, Renderer* renderer) {
+        applyPbrtCameraProjection(app, *view);
         applyPbrtView(app, *view, *scene);
         renderer->setClearOptions({
                 .clearColor = { app.clearColor[0], app.clearColor[1],

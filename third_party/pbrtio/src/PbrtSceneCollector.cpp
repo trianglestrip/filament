@@ -1,8 +1,8 @@
 /*
- * Filament PBRT scene loader (uses pbrtio parser from Falcor PBRTImporter).
+ * PBRT scene collector.
  */
 
-#include <pbrtio/FilamentPbrtLoader.h>
+#include <pbrtio/PbrtSceneLoader.h>
 
 #include <pbrtio/Builder.h>
 #include <pbrtio/Parser.h>
@@ -11,41 +11,32 @@
 #include <algorithm>
 #include <cmath>
 
-namespace filament::pbrtio {
+namespace pbrtio {
 
-using namespace filament::pbrt;
-using namespace filament::math;
-
-// PBRT: Y-up, camera looks +Z. Filament: Y-up, camera looks -Z.
-// Match Falcor PBRTImporter: world transforms use pbrt matrix with Z inversion only.
-static const mat4f kInvertZ = mat4f(
-        1.f, 0.f,  0.f, 0.f,
-        0.f, 1.f,  0.f, 0.f,
-        0.f, 0.f, -1.f, 0.f,
-        0.f, 0.f,  0.f, 1.f);
+using namespace pbrtio::pbrt;
 
 static float3 spectrumToColor(const Spectrum& spectrum) {
     return spectrumToRGB(spectrum);
 }
 
-static mat4f pbrtToFilamentTransform(const mat4f& pbrtTransform) {
-    return pbrtTransform * kInvertZ;
+static mat4f pbrtWorldTransform(const mat4f& pbrtTransform) {
+    return pbrtTransform;
 }
 
 static float3 transformPoint(const mat4f& m, const float3& p) {
-    return (m * float4(p, 1.f)).xyz;
+    return xyz(m * float4(p, 1.f));
 }
 
 static float3 transformVector(const mat4f& m, const float3& v) {
-    return (m * float4(v, 0.f)).xyz;
+    return xyz(m * float4(v, 0.f));
 }
 
 static void extractCamera(const BasicScene& scene, float sceneRadius, PbrtCameraSettings& camera) {
     const auto& cam = scene.getCamera();
-    const mat4f worldFromCamera = pbrtToFilamentTransform(cam.transform);
+    const mat4f worldFromCamera = pbrtWorldTransform(cam.transform);
 
     camera.eye = transformPoint(worldFromCamera, float3(0.f));
-    // PBRT camera looks along +Z; Filament looks along -Z after axis remap.
+    // PBRT camera looks along +Z in its local camera space.
     camera.target = transformPoint(worldFromCamera, float3(0.f, 0.f, 1.f));
     camera.up = normalize(transformVector(worldFromCamera, float3(0.f, 1.f, 0.f)));
     camera.verticalFovDegrees = cam.params.getFloat("fov", 45.f);
@@ -60,8 +51,24 @@ static void extractCamera(const BasicScene& scene, float sceneRadius, PbrtCamera
     camera.farPlane = radius * 20.f;
 }
 
+static void resolveUvTransform(const ParameterDictionary& params, float4& outUvTransform) {
+    outUvTransform = float4{ 1.f, 1.f, 0.f, 0.f };
+    const std::string mapping = params.getString("mapping", "uv");
+    if (mapping == "uv") {
+        outUvTransform = float4{
+                params.getFloat("uscale", 1.f),
+                params.getFloat("vscale", 1.f),
+                params.getFloat("udelta", 0.f),
+                params.getFloat("vdelta", 0.f),
+        };
+    }
+}
+
 static std::filesystem::path resolveSpectrumImagePath(const BasicScene& scene,
-        const std::string& textureName, bool& outSRGB) {
+        const std::string& textureName, bool& outSRGB, float4* outUvTransform = nullptr) {
+    if (outUvTransform) {
+        *outUvTransform = float4{ 1.f, 1.f, 0.f, 0.f };
+    }
     const auto& textures = scene.getSpectrumTextures();
     const auto it = textures.find(textureName);
     if (it == textures.end() || it->second.name != "imagemap") {
@@ -80,7 +87,96 @@ static std::filesystem::path resolveSpectrumImagePath(const BasicScene& scene,
     } else {
         outSRGB = true;
     }
+    if (outUvTransform) {
+        resolveUvTransform(entity.params, *outUvTransform);
+    }
     return scene.resolvePath(filename);
+}
+
+static std::filesystem::path resolveFloatImagePath(const BasicScene& scene,
+        const std::string& textureName, float4* outUvTransform = nullptr, float* outScale = nullptr) {
+    if (outUvTransform) {
+        *outUvTransform = float4{ 1.f, 1.f, 0.f, 0.f };
+    }
+    if (outScale) {
+        *outScale = 1.f;
+    }
+    const auto& textures = scene.getFloatTextures();
+    const auto it = textures.find(textureName);
+    if (it == textures.end() || it->second.name != "imagemap") {
+        return {};
+    }
+    const auto& entity = it->second;
+    const std::string filename = entity.params.getString("filename", "");
+    if (filename.empty()) {
+        return {};
+    }
+    if (outUvTransform) {
+        resolveUvTransform(entity.params, *outUvTransform);
+    }
+    if (outScale) {
+        *outScale = entity.params.getFloat("scale", 1.f);
+    }
+    return scene.resolvePath(filename);
+}
+
+static auto spectrumResolver(const BasicScene& scene) {
+    return [&](const std::filesystem::path& p) { return scene.resolvePath(p); };
+}
+
+static void resolveReflectance(const BasicScene& scene, const ParameterDictionary& params,
+        PbrtMeshInstance& inst) {
+    if (params.hasTexture("reflectance")) {
+        inst.baseColorTexturePath = resolveSpectrumImagePath(scene,
+                params.getTexture("reflectance"), inst.baseColorTextureSRGB,
+                &inst.baseColorUvTransform);
+    } else if (params.hasSpectrum("reflectance")) {
+        inst.baseColor = spectrumToColor(params.getSpectrum("reflectance", Spectrum(float3(0.8f)),
+                spectrumResolver(scene)));
+    }
+}
+
+static void resolveScalarRoughness(const ParameterDictionary& params, PbrtMeshInstance& inst,
+        float defaultRoughness) {
+    if (params.hasFloat("uroughness") || params.hasFloat("vroughness")) {
+        const float ur = params.getFloat("uroughness", defaultRoughness);
+        const float vr = params.getFloat("vroughness", defaultRoughness);
+        inst.roughness = (ur + vr) * 0.5f;
+    } else if (params.hasFloat("roughness")) {
+        inst.roughness = params.getFloat("roughness", defaultRoughness);
+    } else {
+        inst.roughness = defaultRoughness;
+    }
+}
+
+static void resolveRoughnessTexture(const BasicScene& scene, const ParameterDictionary& params,
+        PbrtMeshInstance& inst) {
+    if (!params.hasTexture("roughness")) {
+        return;
+    }
+    inst.roughnessTexturePath = resolveFloatImagePath(scene, params.getTexture("roughness"),
+            &inst.roughnessUvTransform, &inst.roughnessScale);
+}
+
+static void resolveConductor(const BasicScene& scene, const ParameterDictionary& params,
+        PbrtMeshInstance& inst) {
+    inst.metallic = 1.f;
+    resolveScalarRoughness(params, inst, 0.15f);
+    resolveRoughnessTexture(scene, params, inst);
+    if (inst.roughnessTexturePath.empty()) {
+        inst.roughnessMapsClearCoat = false;
+    }
+
+    const auto resolver = spectrumResolver(scene);
+    float3 eta(0.9f, 0.9f, 0.92f);
+    float3 k(3.f, 3.f, 3.f);
+    if (params.hasSpectrum("eta")) {
+        eta = spectrumToRGB(params.getSpectrum("eta", Spectrum(eta), resolver));
+    }
+    if (params.hasSpectrum("k")) {
+        k = spectrumToRGB(params.getSpectrum("k", Spectrum(k), resolver));
+    }
+    inst.baseColor = conductorTintFromEtaK(eta, k);
 }
 
 static void addDistantLight(const BasicScene& scene, const LightSceneEntity& entity,
@@ -89,7 +185,7 @@ static void addDistantLight(const BasicScene& scene, const LightSceneEntity& ent
         return;
     }
     const auto& params = entity.params;
-    const mat4f xf = pbrtToFilamentTransform(entity.transform);
+    const mat4f xf = pbrtWorldTransform(entity.transform);
 
     PbrtLightInstance light;
     light.type = PbrtLightType::Directional;
@@ -126,7 +222,7 @@ static bool tryAddRectAreaLight(const BasicScene& scene, const ShapeSceneEntity&
         return false;
     }
 
-    const mat4f xf = pbrtToFilamentTransform(shape.transform);
+    const mat4f xf = pbrtWorldTransform(shape.transform);
     std::vector<float3> worldPoints;
     worldPoints.reserve(points.size());
     for (const float3& p : points) {
@@ -203,11 +299,6 @@ static void collectLights(const BasicScene& scene, const std::vector<ShapeSceneE
 
 static void collectAllShapes(const BasicScene& scene, std::vector<ShapeSceneEntity>& out) {
     out = scene.getShapes();
-    for (const auto& [_, def] : scene.getInstanceDefinitions()) {
-        for (const auto& shape : def.shapes) {
-            out.push_back(shape);
-        }
-    }
     for (const auto& instance : scene.getInstances()) {
         auto it = scene.getInstanceDefinitions().find(instance.name);
         if (it == scene.getInstanceDefinitions().end()) {
@@ -228,30 +319,45 @@ static void resolveMaterial(const BasicScene& scene, const MaterialRef& ref,
     }
     const MaterialSceneEntity& mat = scene.getMaterial(ref);
     const auto& params = mat.params;
-    if (mat.type == "diffuse" || mat.type == "coateddiffuse") {
-        if (params.hasTexture("reflectance")) {
-            inst.baseColorTexturePath = resolveSpectrumImagePath(scene,
-                    params.getTexture("reflectance"), inst.baseColorTextureSRGB);
-        } else if (params.hasSpectrum("reflectance")) {
-            inst.baseColor = spectrumToColor(params.getSpectrum("reflectance", Spectrum(float3(0.8f)),
-                    [&](const std::filesystem::path& p) { return scene.resolvePath(p); }));
+    inst.pbrtMaterialType = mat.type;
+
+    if (mat.type == "diffuse") {
+        resolveReflectance(scene, params, inst);
+        inst.metallic = 0.f;
+        inst.clearCoat = 0.f;
+        inst.roughness = 1.f;
+        resolveRoughnessTexture(scene, params, inst);
+    } else if (mat.type == "coateddiffuse") {
+        resolveReflectance(scene, params, inst);
+        inst.metallic = 0.f;
+        inst.clearCoat = 1.f;
+        inst.roughness = 1.f;
+        resolveScalarRoughness(params, inst, 0.0001f);
+        inst.clearCoatRoughness = inst.roughness;
+        resolveRoughnessTexture(scene, params, inst);
+        if (!inst.roughnessTexturePath.empty()) {
+            inst.roughnessMapsClearCoat = true;
         }
-        if (mat.type == "coateddiffuse") {
-            const float ur = params.getFloat("uroughness", inst.roughness);
-            const float vr = params.getFloat("vroughness", inst.roughness);
-            inst.roughness = (ur + vr) * 0.5f;
-        } else if (params.hasFloat("roughness")) {
-            inst.roughness = params.getFloat("roughness", inst.roughness);
+    } else if (mat.type == "conductor" || mat.type == "coatedconductor" || mat.type == "metal") {
+        resolveConductor(scene, params, inst);
+        if (mat.type == "coatedconductor") {
+            inst.clearCoat = 1.f;
+            inst.clearCoatRoughness = inst.roughness;
+            inst.roughness = 0.5f;
         }
-    } else if (mat.type == "conductor" || mat.type == "coatedconductor") {
-        inst.metallic = 1.f;
-        const float ur = params.getFloat("uroughness", 0.15f);
-        const float vr = params.getFloat("vroughness", inst.roughness);
-        inst.roughness = (ur + vr) * 0.5f;
-        inst.baseColor = float3(0.9f, 0.9f, 0.92f);
     } else if (mat.type == "dielectric" || mat.type == "thindielectric") {
-        inst.roughness = params.getFloat("roughness", 0.05f);
-        inst.baseColor = float3(0.95f);
+        resolveReflectance(scene, params, inst);
+        inst.metallic = 0.f;
+        inst.clearCoat = 0.f;
+        resolveScalarRoughness(params, inst, 0.05f);
+        if (inst.baseColor == float3(0.75f, 0.75f, 0.75f) && !params.hasSpectrum("reflectance") &&
+                !params.hasTexture("reflectance")) {
+            inst.baseColor = float3(0.95f);
+        }
+    } else {
+        resolveReflectance(scene, params, inst);
+        resolveScalarRoughness(params, inst, inst.roughness);
+        resolveRoughnessTexture(scene, params, inst);
     }
 }
 
@@ -267,7 +373,7 @@ static void addShape(const BasicScene& scene, const ShapeSceneEntity& shape,
 
     PbrtMeshInstance inst;
     inst.plyPath = scene.resolvePath(filename);
-    inst.transform = pbrtToFilamentTransform(shape.transform);
+    inst.transform = pbrtWorldTransform(shape.transform);
 
     if (!std::holds_alternative<std::monostate>(shape.materialRef)) {
         if (const auto* name = std::get_if<std::string>(&shape.materialRef)) {
@@ -293,12 +399,6 @@ bool loadPbrtScene(const std::filesystem::path& pbrtPath, PbrtLoadedScene& out) 
 
     for (const auto& shape : scene.getShapes()) {
         addShape(scene, shape, out.meshes);
-    }
-
-    for (const auto& [_, def] : scene.getInstanceDefinitions()) {
-        for (const auto& shape : def.shapes) {
-            addShape(scene, shape, out.meshes);
-        }
     }
 
     for (const auto& instance : scene.getInstances()) {
@@ -346,4 +446,4 @@ bool loadPbrtScene(const std::filesystem::path& pbrtPath, PbrtLoadedScene& out) 
     return !out.meshes.empty();
 }
 
-} // namespace filament::pbrtio
+} // namespace pbrtio

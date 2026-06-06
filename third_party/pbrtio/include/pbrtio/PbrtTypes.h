@@ -1,5 +1,5 @@
 /*
- * PBRT types (ported from Falcor PBRTImporter / pbrt-v4).
+ * PBRT v4 parser data types.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
 #include <string_view>
 #include <variant>
 
-namespace filament::pbrt {
+namespace pbrtio::pbrt {
 
 struct FileLoc {
     FileLoc() = default;
@@ -38,4 +38,4 @@ enum class SpectrumType {
     Unbounded
 };
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

@@ -44,7 +44,7 @@
 #include <variant>
 #include <vector>
 
-namespace filament::pbrt
+namespace pbrtio::pbrt
 {
 
 using MaterialRef = std::variant<std::monostate, uint32_t, std::string>;
@@ -56,7 +56,7 @@ struct SceneEntity
     SceneEntity() = default;
     SceneEntity(const std::string& name, ParameterDictionary params, FileLoc loc) : name(name), loc(loc), params(params) {}
 
-    std::string toString() const { return fmt::format("SceneEntity(name='{}', params={})", name, params.toString()); }
+    std::string toString() const { return std::format("SceneEntity(name='{}', params={})", name, params.toString()); }
 
     std::string name;
     FileLoc loc;
@@ -72,7 +72,7 @@ struct MaterialSceneEntity : public SceneEntity
 
     std::string toString() const
     {
-        return fmt::format("SceneMaterialEntity(name='{}', type='{}', params={})", name, type, params.toString());
+        return std::format("SceneMaterialEntity(name='{}', type='{}', params={})", name, type, params.toString());
     }
 
     std::string type;
@@ -87,7 +87,7 @@ struct TransformedSceneEntity : public SceneEntity
 
     std::string toString() const
     {
-        return fmt::format("TransformedSceneEntity(name='{}', params={}, transform={})", name, params.toString(), to_string(transform));
+        return std::format("TransformedSceneEntity(name='{}', params={}, transform={})", name, params.toString(), to_string(transform));
     }
 
     float4x4 transform = identity4x4();
@@ -108,7 +108,7 @@ struct CameraSceneEntity : public TransformedSceneEntity
 
     std::string toString() const
     {
-        return fmt::format(
+        return std::format(
             "CameraSceneEntity(name='{}', params={}, transform={}, medium='{}')", name, params.toString(), to_string(transform), medium
         );
     }
@@ -125,7 +125,7 @@ struct LightSceneEntity : public TransformedSceneEntity
 
     std::string toString() const
     {
-        return fmt::format(
+        return std::format(
             "LightSceneEntity(name='{}', params={}, transform={}, medium='{}')", name, params.toString(), to_string(transform), medium
         );
     }
@@ -142,7 +142,7 @@ struct MediumSceneEntity : public TransformedSceneEntity
 
     std::string toString() const
     {
-        return fmt::format("MediumSceneEntity(name='{}', params={}, transform={})", name, params.toString(), to_string(transform));
+        return std::format("MediumSceneEntity(name='{}', params={}, transform={})", name, params.toString(), to_string(transform));
     }
 };
 
@@ -155,7 +155,7 @@ struct TextureSceneEntity : public TransformedSceneEntity
 
     std::string toString() const
     {
-        return fmt::format("TextureSceneEntity(name='{}', params={}, transform={})", name, params.toString(), to_string(transform));
+        return std::format("TextureSceneEntity(name='{}', params={}, transform={})", name, params.toString(), to_string(transform));
     }
 };
 
@@ -183,7 +183,7 @@ struct ShapeSceneEntity : public TransformedSceneEntity
 
     std::string toString() const
     {
-        return fmt::format(
+        return std::format(
             "ShapeSceneEntity(name='{}', params={}, transform={}, reverseOrientation={}, "
             "materialRef={}. lightIndex={}, insideMedium='{}', outsideMedium='{}')",
             name,
@@ -208,7 +208,7 @@ struct InstanceDefinitionSceneEntity
     InstanceDefinitionSceneEntity() = default;
     InstanceDefinitionSceneEntity(const std::string& name, FileLoc loc) : name(name), loc(loc) {}
 
-    std::string toString() const { return fmt::format("InstanceDefinitionSceneEntity(name='{}', shapes='{}')", name, shapes.size()); }
+    std::string toString() const { return std::format("InstanceDefinitionSceneEntity(name='{}', shapes='{}')", name, shapes.size()); }
 
     std::string name;
     FileLoc loc;
@@ -220,7 +220,7 @@ struct InstanceSceneEntity
     InstanceSceneEntity() = default;
     InstanceSceneEntity(const std::string& name, FileLoc loc, const float4x4& transform) : name(name), loc(loc), transform(transform) {}
 
-    std::string toString() const { return fmt::format("InstanceSceneEntity(name='{}', transform='{}')", name, to_string(transform)); }
+    std::string toString() const { return std::format("InstanceSceneEntity(name='{}', transform='{}')", name, to_string(transform)); }
 
     std::string name;
     FileLoc loc;
@@ -307,13 +307,13 @@ struct TransformSet
 {
     Transform& operator[](uint32_t i)
     {
-        FALCOR_ASSERT(i < kMaxTransforms);
+        PBRTIO_ASSERT(i < kMaxTransforms);
         return t[i];
     }
 
     const Transform& operator[](uint32_t i) const
     {
-        FALCOR_ASSERT(i < kMaxTransforms);
+        PBRTIO_ASSERT(i < kMaxTransforms);
         return t[i];
     }
 
@@ -469,4 +469,4 @@ private:
     std::vector<InstanceSceneEntity> mInstances;
 };
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

@@ -2,21 +2,22 @@
  * Taskflow-accelerated PBRT scene loading: parallel texture decode and mesh verification.
  */
 
-#include <pbrtio/FilamentPbrtLoader.h>
+#include <pbrtio/PbrtSceneLoader.h>
 
-#include <filament/Engine.h>
-#include <filament/Texture.h>
-
+#ifdef PBRTIO_STB_IMAGE_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#endif
 #include <stb_image.h>
 
 #include <taskflow.hpp>
 
-#include <utils/Path.h>
-
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <set>
+#include <string>
 #include <utility>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -25,7 +26,7 @@
 #include <windows.h>
 #endif
 
-namespace filament::pbrtio {
+namespace pbrtio {
 
 using Clock = std::chrono::steady_clock;
 
@@ -69,8 +70,8 @@ static double elapsedMs(Clock::time_point start) {
 #ifdef _WIN32
 class MappedFile {
 public:
-    bool open(const utils::Path& path) {
-        mFile = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+    bool open(const std::filesystem::path& path) {
+        mFile = CreateFileW(path.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (mFile == INVALID_HANDLE_VALUE) {
             return false;
@@ -146,7 +147,7 @@ static PbrtDecodedImage decodeImageFile(const std::filesystem::path& path, bool 
         return out;
     }
 
-    const utils::Path absPath = utils::Path(path.string()).getAbsolutePath();
+    const std::filesystem::path absPath = std::filesystem::absolute(path);
     int w = 0, h = 0, n = 0;
     constexpr int kChannels = 4;
     uint8_t* data = nullptr;
@@ -159,7 +160,8 @@ static PbrtDecodedImage decodeImageFile(const std::filesystem::path& path, bool 
     }
 #endif
     if (!data) {
-        data = stbi_load(absPath.c_str(), &w, &h, &n, kChannels);
+        const std::string absPathString = absPath.string();
+        data = stbi_load(absPathString.c_str(), &w, &h, &n, kChannels);
     }
     if (!data) {
         std::cerr << "Failed to decode texture: " << path << std::endl;
@@ -174,50 +176,22 @@ static PbrtDecodedImage decodeImageFile(const std::filesystem::path& path, bool 
     return out;
 }
 
-static filament::Texture* uploadDecodedTexture(filament::Engine& engine, PbrtDecodedImage& image) {
-    if (!image.valid || !image.pixels || image.width <= 0 || image.height <= 0) {
-        return nullptr;
-    }
-
-    const Texture::InternalFormat format = image.sRGB
-            ? Texture::InternalFormat::SRGB8_A8
-            : Texture::InternalFormat::RGBA8;
-
-    Texture* tex = Texture::Builder()
-            .width(static_cast<uint32_t>(image.width))
-            .height(static_cast<uint32_t>(image.height))
-            .levels(0xff)
-            .format(format)
-            .usage(Texture::Usage::DEFAULT | Texture::Usage::GEN_MIPMAPPABLE)
-            .build(engine);
-
-    uint8_t* pixels = image.pixels;
-    const size_t byteSize = image.byteSize;
-    image.pixels = nullptr;
-    image.byteSize = 0;
-    image.valid = false;
-
-    Texture::PixelBufferDescriptor buffer(pixels,
-            byteSize,
-            Texture::Format::RGBA,
-            Texture::Type::UBYTE,
-            (Texture::PixelBufferDescriptor::Callback) &stbi_image_free);
-    tex->setImage(engine, 0, std::move(buffer));
-    tex->generateMipmaps(engine);
-    return tex;
-}
-
 static std::vector<TextureJob> collectTextureJobs(const PbrtLoadedScene& scene,
         bool loadEnvironmentTexture) {
     std::vector<TextureJob> jobs;
     std::set<std::string> seen;
     for (const auto& mesh : scene.meshes) {
-        if (mesh.baseColorTexturePath.empty()) {
-            continue;
+        if (!mesh.baseColorTexturePath.empty()) {
+            const std::string key = mesh.baseColorTexturePath.string();
+            if (seen.insert(key).second) {
+                jobs.push_back({ key, mesh.baseColorTexturePath, mesh.baseColorTextureSRGB });
+            }
         }
-        const std::string key = mesh.baseColorTexturePath.string();
-        if (seen.insert(key).second) {
-            jobs.push_back({ key, mesh.baseColorTexturePath, mesh.baseColorTextureSRGB });
+        if (!mesh.roughnessTexturePath.empty()) {
+            const std::string key = mesh.roughnessTexturePath.string();
+            if (seen.insert(key).second) {
+                jobs.push_back({ key, mesh.roughnessTexturePath, false });
+            }
         }
     }
     if (loadEnvironmentTexture && scene.environment.valid && !scene.environment.mapPath.empty()) {
@@ -229,8 +203,8 @@ static std::vector<TextureJob> collectTextureJobs(const PbrtLoadedScene& scene,
     return jobs;
 }
 
-bool loadPbrtFilamentScene(const std::filesystem::path& pbrtPath, filament::Engine* engine,
-        PbrtFilamentScene& out, bool loadEnvironmentTexture) {
+bool loadPbrtSceneResources(const std::filesystem::path& pbrtPath,
+        PbrtSceneResources& out, bool loadEnvironmentTexture) {
     const auto totalStart = Clock::now();
     out.textures = {};
     out.timings = {};
@@ -282,31 +256,8 @@ bool loadPbrtFilamentScene(const std::filesystem::path& pbrtPath, filament::Engi
         out.scene.meshes[i].plyFileExists = meshExists[i];
     }
 
-    if (engine) {
-        const auto uploadStart = Clock::now();
-        for (auto& [key, image] : out.textures.decoded) {
-            if (!image.valid) {
-                continue;
-            }
-            if (Texture* tex = uploadDecodedTexture(*engine, image)) {
-                out.textures.gpu[key] = tex;
-                out.textures.owned.push_back(tex);
-            }
-        }
-        out.timings.uploadTexturesMs = elapsedMs(uploadStart);
-    }
-
     out.timings.totalMs = elapsedMs(totalStart);
     return true;
-}
-
-void destroyPbrtFilamentTextures(filament::Engine& engine, PbrtFilamentTextures& textures) {
-    for (Texture* tex : textures.owned) {
-        engine.destroy(tex);
-    }
-    textures.owned.clear();
-    textures.gpu.clear();
-    textures.decoded.clear();
 }
 
 void printPbrtLoadTimings(const PbrtLoadTimings& timings) {
@@ -320,4 +271,4 @@ void printPbrtLoadTimings(const PbrtLoadTimings& timings) {
               << std::endl;
 }
 
-} // namespace filament::pbrtio
+} // namespace pbrtio

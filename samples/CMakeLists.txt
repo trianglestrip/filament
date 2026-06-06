@@ -244,11 +244,12 @@ set_target_properties(samples-common PROPERTIES FOLDER Samples/Common)
 # PBRT Filament scene host (requires filamentapp for MeshAssimp)
 # ==================================================================================================
 
-set(PBRTIO_DIR ${ROOT_DIR}/libs/pbrtio)
+set(PBRTIO_DIR ${ROOT_DIR}/third_party/pbrtio)
 add_library(pbrtio-filament STATIC
-    ${PBRTIO_DIR}/src/PbrtFilamentSceneHost.cpp
+    PbrtFilamentSceneHost.cpp
 )
-target_include_directories(pbrtio-filament PUBLIC ${PBRTIO_DIR}/include)
+target_include_directories(pbrtio-filament PUBLIC ${PBRTIO_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(pbrtio-filament PUBLIC cxx_std_20)
 target_link_libraries(pbrtio-filament PUBLIC pbrtio filamentapp)
 set_target_properties(pbrtio-filament PROPERTIES FOLDER Samples/Common)
 

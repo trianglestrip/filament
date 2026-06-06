@@ -36,9 +36,7 @@
 #include <pbrtio/PbrtFormat.h>
 #include <pbrtio/PbrtMath.h>
 
-#include <math/mat4.h>
-
-namespace filament::pbrt
+namespace pbrtio::pbrt
 {
 
 TransformSet inverse(const TransformSet& ts)
@@ -54,11 +52,11 @@ std::string to_string(const MaterialRef& materialRef)
 {
     if (const uint32_t* pIndex = std::get_if<uint32_t>(&materialRef))
     {
-        return fmt::format("<index:{}>", *pIndex);
+        return std::format("<index:{}>", *pIndex);
     }
     else if (const std::string* pName = std::get_if<std::string>(&materialRef))
     {
-        return fmt::format("<name:{}>", *pName);
+        return std::format("<name:{}>", *pName);
     }
     else
     {
@@ -141,24 +139,24 @@ const MaterialSceneEntity& BasicScene::getMaterial(const MaterialRef& materialRe
 {
     if (const uint32_t* pIndex = std::get_if<uint32_t>(&materialRef))
     {
-        FALCOR_ASSERT(*pIndex >= 0 && *pIndex <= mMaterials.size());
+        PBRTIO_ASSERT(*pIndex >= 0 && *pIndex <= mMaterials.size());
         return mMaterials[*pIndex];
     }
     else if (const std::string* pName = std::get_if<std::string>(&materialRef))
     {
         auto it = mNamedMaterials.find(*pName);
-        FALCOR_ASSERT(it != mNamedMaterials.end());
+        PBRTIO_ASSERT(it != mNamedMaterials.end());
         return it->second;
     }
     else
     {
-        FALCOR_THROW("Expected valid material reference (index or name).");
+        pbrtioThrow("Expected valid material reference (index or name).");
     }
 }
 
 const SceneEntity& BasicScene::getAreaLight(int lightIndex) const
 {
-    FALCOR_ASSERT(lightIndex >= 0 && lightIndex < mAreaLights.size());
+    PBRTIO_ASSERT(lightIndex >= 0 && lightIndex < mAreaLights.size());
     return mAreaLights[lightIndex];
 }
 
@@ -175,26 +173,26 @@ std::string BasicScene::toString() const
 
     auto printEntities = [&](const std::string_view name, auto entities)
     {
-        str += fmt::format("{}=[\n", name);
+        str += std::format("{}=[\n", name);
         for (const auto& entity : entities)
-            str += fmt::format("{}\n", entity.toString());
+            str += std::format("{}\n", entity.toString());
         str += "]\n";
     };
 
     auto printNamedEntities = [&](const std::string_view name, auto entities)
     {
-        str += fmt::format("{}=[\n", name);
+        str += std::format("{}=[\n", name);
         for (const auto& [entityName, entity] : entities)
-            str += fmt::format("{}={}\n", entityName, entity.toString());
+            str += std::format("{}={}\n", entityName, entity.toString());
         str += "]\n";
     };
 
-    str += fmt::format("filter={}\n", mFilter.toString());
-    str += fmt::format("film={}\n", mFilm.toString());
-    str += fmt::format("camera={}\n", mCamera.toString());
-    str += fmt::format("sampler={}\n", mSampler.toString());
-    str += fmt::format("integrator={}\n", mIntegrator.toString());
-    str += fmt::format("accelerator={}\n", mAccelerator.toString());
+    str += std::format("filter={}\n", mFilter.toString());
+    str += std::format("film={}\n", mFilm.toString());
+    str += std::format("camera={}\n", mCamera.toString());
+    str += std::format("sampler={}\n", mSampler.toString());
+    str += std::format("integrator={}\n", mIntegrator.toString());
+    str += std::format("accelerator={}\n", mAccelerator.toString());
     printNamedEntities("namedMaterials", mNamedMaterials);
     printEntities("materials", mMaterials);
     printEntities("media", mMedia);
@@ -243,7 +241,7 @@ void BasicSceneBuilder::onIdentity(FileLoc loc)
 
 void BasicSceneBuilder::onTranslate(Float dx, Float dy, Float dz, FileLoc loc)
 {
-    mGraphicsState.forActiveTransforms([=](auto t) { return t * float4x4::translation(float3(dx, dy, dz)); });
+    mGraphicsState.forActiveTransforms([=](auto t) { return t * matrixFromTranslation(float3(dx, dy, dz)); });
 }
 
 void BasicSceneBuilder::onCoordinateSystem(const std::string& name, FileLoc loc)
@@ -299,7 +297,7 @@ void BasicSceneBuilder::onAttributeEnd(FileLoc loc)
     }
     else
     {
-        FALCOR_ASSERT(mStack.back().type == StackEntry::Type::Attribute);
+        PBRTIO_ASSERT(mStack.back().type == StackEntry::Type::Attribute);
     }
 
     mGraphicsState = std::move(mStack.back().graphicsState);
@@ -449,7 +447,7 @@ void BasicSceneBuilder::onObjectEnd(FileLoc loc)
     }
     else
     {
-        FALCOR_ASSERT(mStack.back().type == StackEntry::Type::Object);
+        PBRTIO_ASSERT(mStack.back().type == StackEntry::Type::Object);
     }
 
     mGraphicsState = std::move(mStack.back().graphicsState);
@@ -626,7 +624,7 @@ void BasicSceneBuilder::onMaterial(const std::string& name, ParsedParameterVecto
     ParameterDictionary dict(std::move(params), mGraphicsState.materialAttributes, mGraphicsState.pColorSpace);
 
     mGraphicsState.currentMaterial =
-        mScene.addMaterial(MaterialSceneEntity(fmt::format("Unnamed{}", mUnamedMaterialIndex++), name, std::move(dict), loc));
+        mScene.addMaterial(MaterialSceneEntity(std::format("Unnamed{}", mUnamedMaterialIndex++), name, std::move(dict), loc));
 }
 
 void BasicSceneBuilder::onMakeNamedMaterial(const std::string& name, ParsedParameterVector params, FileLoc loc)
@@ -663,4 +661,4 @@ void BasicSceneBuilder::onAreaLightSource(const std::string& name, ParsedParamet
     mGraphicsState.areaLightLoc = loc;
 }
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

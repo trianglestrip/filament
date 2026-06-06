@@ -1,4 +1,4 @@
-﻿/***************************************************************************
+/***************************************************************************
  # Copyright (c) 2015-23, NVIDIA CORPORATION. All rights reserved.
  #
  # Redistribution and use in source and binary forms, with or without
@@ -41,8 +41,10 @@
 
 #include <cmath>
 
-namespace filament::pbrt
+namespace pbrtio::pbrt
 {
+
+constexpr float kPi = 3.14159265358979323846f;
 
 struct SDFace;
 struct SDVertex;
@@ -86,7 +88,7 @@ struct SDFace
             if (v[i] == vert)
                 return i;
         }
-        FALCOR_THROW("Basic logic error in SDFace::vnum().");
+        pbrtioThrow("Basic logic error in SDFace::vnum().");
     }
 
     SDFace* nextFace(SDVertex* vert) const { return f[vnum(vert)]; }
@@ -100,7 +102,7 @@ struct SDFace
             if (v[i] != v0 && v[i] != v1)
                 return v[i];
         }
-        FALCOR_THROW("Basic logic error in SDFace::otherVert()");
+        pbrtioThrow("Basic logic error in SDFace::otherVert()");
     }
 
     SDVertex* v[3];
@@ -415,8 +417,8 @@ LoopSubdivideResult loopSubdivide(uint32_t levels, std::span<const float3> posit
             // Compute tangents of interior face
             for (uint32_t j = 0; j < valence; ++j)
             {
-                S += std::cos(2.f * float(M_PI) * j / valence) * float3(pRing[j]);
-                T += std::sin(2.f * float(M_PI) * j / valence) * float3(pRing[j]);
+                S += std::cos(2.f * kPi * j / valence) * float3(pRing[j]);
+                T += std::sin(2.f * kPi * j / valence) * float3(pRing[j]);
             }
         }
         else
@@ -437,7 +439,7 @@ LoopSubdivideResult loopSubdivide(uint32_t levels, std::span<const float3> posit
             }
             else
             {
-                float theta = float(M_PI) / float(valence - 1);
+                float theta = kPi / float(valence - 1);
                 T = float3(std::sin(theta) * (pRing[0] + pRing[valence - 1]));
                 for (uint32_t k = 1; k < valence - 1; ++k)
                 {
@@ -482,7 +484,7 @@ static float3 weightOneRing(SDVertex* vert, float beta)
 {
     // Put vert one-ring in pRing.
     uint32_t valence = vert->valence();
-    FALCOR_ASSERT(valence < 16);
+    PBRTIO_ASSERT(valence < 16);
     float3 pRing[16];
 
     vert->oneRing(pRing);
@@ -528,7 +530,7 @@ static float3 weightBoundary(SDVertex* vert, float beta)
 {
     // Put vert one-ring in pRing.
     uint32_t valence = vert->valence();
-    FALCOR_ASSERT(valence < 16);
+    PBRTIO_ASSERT(valence < 16);
     float3 pRing[16];
 
     vert->oneRing(pRing);
@@ -538,4 +540,4 @@ static float3 weightBoundary(SDVertex* vert, float beta)
     return p;
 }
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

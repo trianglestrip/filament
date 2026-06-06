@@ -39,7 +39,7 @@
 #include <utility>
 #include <charconv>
 
-namespace filament::pbrt
+namespace pbrtio::pbrt
 {
 
 ParserTarget::~ParserTarget() {}
@@ -51,7 +51,7 @@ std::string toString(const std::string_view sv)
 
 std::string Token::toString() const
 {
-    return fmt::format("[ Token token: {} loc: {} ]", token, loc.toString());
+    return std::format("[ Token token: {} loc: {} ]", token, loc.toString());
 }
 
 static char decodeEscaped(int ch, const FileLoc& loc)
@@ -177,7 +177,7 @@ std::optional<Token> Tokenizer::next()
                     else
                     {
                         ++p;
-                        FALCOR_ASSERT(p < mPos);
+                        PBRTIO_ASSERT(p < mPos);
                         mEscaped.push_back(decodeEscaped(*p, startLoc));
                     }
                 }
@@ -497,7 +497,7 @@ void parse(ParserTarget& target, std::unique_ptr<Tokenizer> tokenizer)
 
     auto unget = [&](Token t)
     {
-        FALCOR_ASSERT(!ungetToken.has_value());
+        PBRTIO_ASSERT(!ungetToken.has_value());
         ungetToken = t;
     };
 
@@ -886,4 +886,4 @@ void parseString(ParserTarget& target, std::string str)
     target.onEndOfFiles();
 }
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

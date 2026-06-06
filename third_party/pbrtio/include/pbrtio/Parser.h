@@ -1,4 +1,4 @@
-﻿/***************************************************************************
+/***************************************************************************
  # Copyright (c) 2015-22, NVIDIA CORPORATION. All rights reserved.
  #
  # Redistribution and use in source and binary forms, with or without
@@ -41,7 +41,7 @@
 #include <string>
 #include <string_view>
 
-namespace filament::pbrt
+namespace pbrtio::pbrt
 {
 
 class ParserTarget
@@ -180,4 +180,4 @@ private:
     std::string mEscaped; ///< Temporary storage for escaped tokens.
 };
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

@@ -1,5 +1,5 @@
 /*
- * PBRT helper utilities (ported from Falcor PBRTImporter).
+ * PBRT helper utilities.
  */
 #pragma once
 
@@ -8,7 +8,7 @@
 #include <format>
 #include <stdexcept>
 
-namespace filament::pbrt {
+namespace pbrtio::pbrt {
 
 template<typename... Args>
 [[noreturn]] inline void throwError(std::format_string<Args...> fmt, Args&&... args) {
@@ -26,4 +26,4 @@ inline void logWarning(const FileLoc& loc, std::format_string<Args...> fmt, Args
             std::format(fmt, std::forward<Args>(args)...).c_str());
 }
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

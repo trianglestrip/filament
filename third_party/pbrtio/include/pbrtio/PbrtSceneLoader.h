@@ -1,11 +1,10 @@
 /*
- * Load a parsed PBRT scene into Filament-friendly mesh instances.
- * Parser derived from Falcor PBRTImporter / pbrt-v4.
+ * Load a parsed PBRT scene into renderer-neutral scene resources.
+ * PBRT v4 parser and renderer-neutral scene resource loader.
  */
 #pragma once
 
-#include <math/mat4.h>
-#include <math/vec3.h>
+#include <pbrtio/PbrtMathTypes.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -14,24 +13,30 @@
 #include <unordered_map>
 #include <vector>
 
-namespace filament {
-class Engine;
-class Texture;
-} // namespace filament
-
-namespace filament::pbrtio {
+namespace pbrtio {
 
 struct PbrtMeshInstance {
     std::filesystem::path plyPath;
-    math::mat4f transform;
-    math::float3 baseColor{ 0.75f, 0.75f, 0.75f };
+    pbrt::mat4f transform;
+    pbrt::float3 baseColor{ 0.75f, 0.75f, 0.75f };
     float roughness = 0.45f;
     float metallic = 0.f;
+    float clearCoat = 0.f;
+    float clearCoatRoughness = 0.f;
+    float roughnessScale = 1.f;
     std::string materialName;
+    std::string pbrtMaterialType;
     /** Resolved imagemap path for spectrum reflectance textures (empty = solid color only). */
     std::filesystem::path baseColorTexturePath;
     bool baseColorTextureSRGB = true;
-    /** Set by parallel mesh verification during loadPbrtFilamentScene. */
+    /** Resolved float imagemap path for roughness textures (empty = scalar roughness only). */
+    std::filesystem::path roughnessTexturePath;
+    /** PBRT UVMapping as (uscale, vscale, udelta, vdelta). Applied in the textured material shader. */
+    pbrt::float4 baseColorUvTransform{ 1.f, 1.f, 0.f, 0.f };
+    pbrt::float4 roughnessUvTransform{ 1.f, 1.f, 0.f, 0.f };
+    /** When true, spatial roughness modulates clearCoatRoughness instead of base roughness. */
+    bool roughnessMapsClearCoat = false;
+    /** Set by parallel mesh verification during loadPbrtSceneResources. */
     bool plyFileExists = true;
 };
 
@@ -42,26 +47,25 @@ enum class PbrtLightType {
 
 struct PbrtLightInstance {
     PbrtLightType type = PbrtLightType::Directional;
-    math::float3 color{ 1.f };
+    pbrt::float3 color{ 1.f };
     float intensity = 1.f;
-    math::float3 position{ 0.f };
-    math::float3 direction{ 0.f, -1.f, 0.f };
+    pbrt::float3 position{ 0.f };
+    pbrt::float3 direction{ 0.f, -1.f, 0.f };
     bool castShadows = true;
 };
 
 /**
  * PBRT rect area light (AreaLightSource "diffuse" on trianglemesh/bilinearmesh).
- * emissiveColor is spectrum radiance L (W/(m^2*sr)); geometry is a world-space quad.
- * Use LightManager::Type::RECT (oriented quad emitter) plus optional emissive mesh.
+ * radiance is spectrum radiance L (W/(m^2*sr)); geometry is a world-space quad.
  */
 struct PbrtRectAreaLight {
-    math::float3 positions[4]{};
+    pbrt::float3 positions[4]{};
     uint16_t indices[6]{ 0, 1, 2, 0, 2, 3 };
-    math::float3 normal{ 0.f, 1.f, 0.f };
-    math::float3 center{ 0.f };
+    pbrt::float3 normal{ 0.f, 1.f, 0.f };
+    pbrt::float3 center{ 0.f };
     float width = 1.f;
     float height = 1.f;
-    math::float3 radiance{ 1.f };
+    pbrt::float3 radiance{ 1.f };
     float scale = 1.f;
 };
 
@@ -75,9 +79,9 @@ struct PbrtEnvironmentLight {
 };
 
 struct PbrtCameraSettings {
-    math::float3 eye{ 0.f, 0.f, 5.f };
-    math::float3 target{ 0.f, 0.f, 0.f };
-    math::float3 up{ 0.f, 1.f, 0.f };
+    pbrt::float3 eye{ 0.f, 0.f, 5.f };
+    pbrt::float3 target{ 0.f, 0.f, 0.f };
+    pbrt::float3 up{ 0.f, 1.f, 0.f };
     float verticalFovDegrees = 45.f;
     float aspectRatio = 16.f / 9.f;
     float nearPlane = 0.01f;
@@ -91,11 +95,11 @@ struct PbrtLoadedScene {
     std::vector<PbrtRectAreaLight> areaLights;
     PbrtEnvironmentLight environment;
     PbrtCameraSettings camera;
-    math::float3 sceneCenter{ 0.f };
+    pbrt::float3 sceneCenter{ 0.f };
     float sceneRadius = 1.f;
 };
 
-/** Decoded RGBA pixels; buffer owned until GPU upload or destroyPbrtFilamentTextures. */
+/** Decoded RGBA pixels; buffer owned by PbrtDecodedImage. */
 struct PbrtDecodedImage {
     uint8_t* pixels = nullptr;
     size_t byteSize = 0;
@@ -113,10 +117,8 @@ struct PbrtDecodedImage {
     PbrtDecodedImage& operator=(const PbrtDecodedImage&) = delete;
 };
 
-struct PbrtFilamentTextures {
+struct PbrtDecodedTextures {
     std::unordered_map<std::string, PbrtDecodedImage> decoded;
-    std::unordered_map<std::string, filament::Texture*> gpu;
-    std::vector<filament::Texture*> owned;
 };
 
 struct PbrtLoadTimings {
@@ -128,9 +130,9 @@ struct PbrtLoadTimings {
     double totalMs = 0;
 };
 
-struct PbrtFilamentScene {
+struct PbrtSceneResources {
     PbrtLoadedScene scene;
-    PbrtFilamentTextures textures;
+    PbrtDecodedTextures textures;
     PbrtLoadTimings timings;
 };
 
@@ -138,14 +140,11 @@ struct PbrtFilamentScene {
 bool loadPbrtScene(const std::filesystem::path& pbrtPath, PbrtLoadedScene& out);
 
 /**
- * Full load pipeline: parse, taskflow-parallel texture decode + mesh verify, optional GPU upload.
- * When engine is null, only CPU decode is performed.
+ * Full CPU load pipeline: parse, taskflow-parallel texture decode, and mesh verification.
  */
-bool loadPbrtFilamentScene(const std::filesystem::path& pbrtPath, filament::Engine* engine,
-        PbrtFilamentScene& out, bool loadEnvironmentTexture = true);
-
-void destroyPbrtFilamentTextures(filament::Engine& engine, PbrtFilamentTextures& textures);
+bool loadPbrtSceneResources(const std::filesystem::path& pbrtPath,
+        PbrtSceneResources& out, bool loadEnvironmentTexture = true);
 
 void printPbrtLoadTimings(const PbrtLoadTimings& timings);
 
-} // namespace filament::pbrtio
+} // namespace pbrtio

@@ -1,9 +1,11 @@
 /*
- * Compatibility layer for porting Falcor PBRT importer to Filament.
+ * Compatibility layer for the PBRT parser.
  * SPDX-License-Identifier: Apache-2.0 (parser derived from pbrt-v4)
  */
 
 #pragma once
+
+#include <pbrtio/PbrtMathTypes.h>
 
 #include <cassert>
 #include <cstdarg>
@@ -22,33 +24,24 @@
 #include <variant>
 #include <vector>
 
-#include <math/vec2.h>
-#include <math/vec3.h>
-#include <math/vec4.h>
-#include <math/mat4.h>
-
-namespace filament::pbrt {
+namespace pbrtio::pbrt {
 
 using Float = float;
-using float2 = math::float2;
-using float3 = math::float3;
-using float4 = math::float4;
-using float4x4 = math::mat4f;
 
 inline float4x4 identity4x4() { return float4x4(1.0f); }
 
-#define FALCOR_ASSERT(x) assert(x)
-#define FALCOR_UNREACHABLE() assert(false)
-#define FALCOR_UNIMPLEMENTED() assert(false)
-#define FALCOR_CHECK(cond, ...) assert(cond)
+#define PBRTIO_ASSERT(x) assert(x)
+#define PBRTIO_UNREACHABLE() assert(false)
+#define PBRTIO_UNIMPLEMENTED() assert(false)
+#define PBRTIO_CHECK(cond, ...) assert(cond)
 
-[[noreturn]] inline void falcorThrowMsg(const std::string& msg) {
+[[noreturn]] inline void pbrtioThrowMsg(const std::string& msg) {
     throw std::runtime_error(msg);
 }
 
 template<typename... Args>
-[[noreturn]] inline void FALCOR_THROW(const char* fmt, Args&&...) {
-    falcorThrowMsg(fmt);
+[[noreturn]] inline void pbrtioThrow(const char* fmt, Args&&...) {
+    pbrtioThrowMsg(fmt);
 }
 
 inline bool hasExtension(const std::filesystem::path& path, const char* ext) {
@@ -76,6 +69,4 @@ inline void logInfo(std::format_string<Args...> fmt, Args&&... args) {
             std::format(fmt, std::forward<Args>(args)...).c_str());
 }
 
-} // namespace filament::pbrt
-
-#include <pbrtio/PbrtSpectrum.h>
+} // namespace pbrtio::pbrt

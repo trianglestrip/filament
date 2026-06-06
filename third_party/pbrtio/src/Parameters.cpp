@@ -36,7 +36,7 @@
 #include <pbrtio/PbrtFormat.h>
 #include <pbrtio/PbrtSpectrum.h>
 
-namespace filament::pbrt
+namespace pbrtio::pbrt
 {
 
 // --------------------------------------------------------------------
@@ -45,41 +45,41 @@ namespace filament::pbrt
 
 void ParsedParameter::addFloat(Float f)
 {
-    FALCOR_ASSERT(ints.empty() && strings.empty() && bools.empty());
+    PBRTIO_ASSERT(ints.empty() && strings.empty() && bools.empty());
     floats.push_back(f);
 }
 
 void ParsedParameter::addInt(int i)
 {
-    FALCOR_ASSERT(floats.empty() && strings.empty() && bools.empty());
+    PBRTIO_ASSERT(floats.empty() && strings.empty() && bools.empty());
     ints.push_back(i);
 }
 
 void ParsedParameter::addString(const std::string_view s)
 {
-    FALCOR_ASSERT(floats.empty() && ints.empty() && bools.empty());
+    PBRTIO_ASSERT(floats.empty() && ints.empty() && bools.empty());
     strings.push_back({s.begin(), s.end()});
 }
 
 void ParsedParameter::addBool(bool b)
 {
-    FALCOR_ASSERT(floats.empty() && ints.empty() && strings.empty());
+    PBRTIO_ASSERT(floats.empty() && ints.empty() && strings.empty());
     bools.push_back(b);
 }
 
 std::string ParsedParameter::toString() const
 {
     std::string str;
-    str += fmt::format("{} {} [ ", type, name);
+    str += std::format("{} {} [ ", type, name);
     if (!floats.empty())
     {
         for (Float f : floats)
-            str += fmt::format("{} ", f);
+            str += std::format("{} ", f);
     }
     else if (!ints.empty())
     {
         for (int i : ints)
-            str += fmt::format("{} ", i);
+            str += std::format("{} ", i);
     }
     else if (!strings.empty())
     {
@@ -207,7 +207,7 @@ FileLoc ParameterDictionary::getParameterLoc(const std::string& name) const
 {
     auto p = findParameter(name);
     if (!p)
-        FALCOR_THROW("Parameter not found!");
+        pbrtioThrow("Parameter not found!");
     return p->loc;
 }
 
@@ -584,4 +584,4 @@ std::vector<Spectrum> ParameterDictionary::extractSpectrumArray(const ParsedPara
     return {};
 }
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

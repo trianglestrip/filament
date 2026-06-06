@@ -37,7 +37,7 @@
 #include <span>
 #include <vector>
 
-namespace filament::pbrt
+namespace pbrtio::pbrt
 {
 
 struct LoopSubdivideResult
@@ -49,4 +49,4 @@ struct LoopSubdivideResult
 
 LoopSubdivideResult loopSubdivide(uint32_t levels, std::span<const float3> positions, std::span<const uint32_t> vertices);
 
-} // namespace filament::pbrt
+} // namespace pbrtio::pbrt

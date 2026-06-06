@@ -63,6 +63,7 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 #include <thread>
@@ -85,6 +86,13 @@ using namespace filament::app;
 namespace {
 
 using namespace filament::backend;
+
+float2 getFlightPitchYaw(float3 eye, float3 target) {
+    const float3 gaze = normalize(target - eye);
+    const float pitch = std::asin(std::clamp(gaze.y, -1.0f, 1.0f));
+    const float yaw = std::atan2(-gaze.x, -gaze.z);
+    return { pitch, yaw };
+}
 }
 
 FilamentApp& FilamentApp::get() {
@@ -165,6 +173,7 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
     mWindowTitle = config.title;
     std::unique_ptr<FilamentApp::Window> window(
             new FilamentApp::Window(this, config, config.title, mCameraParams, width, height));
+    mWindow = window.get();
 
     mDepthMaterial = Material::Builder()
             .package(FILAMENTAPP_DEPTHVISUALIZER_DATA, FILAMENTAPP_DEPTHVISUALIZER_SIZE)
@@ -326,10 +335,24 @@ try {
                         *captureFrame = true;
                     }
 #endif
-                    window->keyDown(event.key.code);
+                    {
+                        CameraManipulator::Key cameraKey;
+                        const bool isCameraKey =
+                                manipulatorKeyFromKeycode(event.key.code, cameraKey);
+                        if (isCameraKey || !io || !io->WantCaptureKeyboard) {
+                            window->keyDown(event.key.code);
+                        }
+                    }
                     break;
                 case AppEvent::Type::KEYUP:
-                    window->keyUp(event.key.code);
+                    {
+                        CameraManipulator::Key cameraKey;
+                        const bool isCameraKey =
+                                manipulatorKeyFromKeycode(event.key.code, cameraKey);
+                        if (isCameraKey || !io || !io->WantCaptureKeyboard) {
+                            window->keyUp(event.key.code);
+                        }
+                    }
                     break;
                 case AppEvent::Type::MOUSE_WHEEL:
                     if (!io || !io->WantCaptureMouse) window->mouseWheel(event.mouseWheel.delta);
@@ -561,6 +584,7 @@ try {
     cameraGrid.reset();
     lightmapCubes.clear();
     window.reset();
+    mWindow = nullptr;
 
     mIBL.reset();
     mEngine->destroy(mDepthMI);
@@ -628,6 +652,13 @@ void FilamentApp::loadIBL(const Config& config) {
         return;
     }
     loadIBL(config.iblDirectory);
+}
+
+void FilamentApp::resetCameraManipulator(float3 eye, float3 target, float3 up,
+        float verticalFovDegrees, float farPlane) {
+    if (mWindow) {
+        mWindow->resetMainCameraManipulator(eye, target, up, verticalFovDegrees, farPlane);
+    }
 }
 
 void FilamentApp::loadDirt(const Config& config) {
@@ -749,6 +780,9 @@ FilamentApp::Window::Window(FilamentApp* filamentApp, const Config& config, std:
 
     mMainView->setCamera(mMainCamera);
     mMainView->setCameraManipulator(mMainCameraMan);
+    if (config.cameraMode == camutils::Mode::FREE_FLIGHT) {
+        mMainCameraMan->scroll(0, 0, 30.0f);
+    }
     if (config.splitView) {
         // Depth view always uses the main camera
         mDepthView->setCamera(mMainCamera);
@@ -778,6 +812,58 @@ FilamentApp::Window::~Window() {
     mDisplayManager->destroyWindow(mWindow);
     delete mMainCameraMan;
     delete mDebugCameraMan;
+}
+
+void FilamentApp::Window::resetMainCameraManipulator(float3 eye, float3 target, float3 up,
+        float verticalFovDegrees, float farPlane) {
+    const float3 targetToEye = eye - target;
+    const float distanceToTarget = length(targetToEye);
+    if (distanceToTarget <= 0.0f) {
+        return;
+    }
+
+    if (length(up) <= 0.0f) {
+        up = { 0.0f, 1.0f, 0.0f };
+    } else {
+        up = normalize(up);
+    }
+
+    const float fovDegrees = verticalFovDegrees > 0.0f ? verticalFovDegrees : 33.0f;
+    const float far = farPlane > 0.0f ? farPlane : 5000.0f;
+    constexpr float kPi = 3.14159265358979323846f;
+    const float halfExtent = distanceToTarget * std::tan(0.5f * fovDegrees * kPi / 180.0f);
+    const float mapExtent = std::max(halfExtent * 2.0f, 1.0f);
+    const float3 groundNormal = normalize(targetToEye);
+    const float groundOffset = dot(groundNormal, target);
+    const float2 flightPitchYaw = getFlightPitchYaw(eye, target);
+
+    CameraManipulator* replacement = CameraManipulator::Builder()
+            .targetPosition(target.x, target.y, target.z)
+            .upVector(up.x, up.y, up.z)
+            .orbitHomePosition(eye.x, eye.y, eye.z)
+            .fovDirection(camutils::Fov::VERTICAL)
+            .fovDegrees(fovDegrees)
+            .farPlane(far)
+            .mapExtent(mapExtent, mapExtent)
+            .groundPlane(groundNormal.x, groundNormal.y, groundNormal.z, groundOffset)
+            .flightStartPosition(eye.x, eye.y, eye.z)
+            .flightStartOrientation(flightPitchYaw.x, flightPitchYaw.y)
+            .flightMaxMoveSpeed(std::max({ distanceToTarget * 0.25f, far * 0.02f, 50.0f }))
+            .flightMoveDamping(15.0f)
+            .build(mConfig.cameraMode);
+
+    CameraManipulator* previous = mMainCameraMan;
+    mMainCameraMan = replacement;
+    mMainView->setCameraManipulator(mMainCameraMan);
+    if (mConfig.splitView) {
+        mDepthView->setCameraManipulator(mMainCameraMan);
+    }
+    if (mConfig.cameraMode == camutils::Mode::FREE_FLIGHT) {
+        // Give WASD a usable default speed without requiring scroll-wheel adjustment first.
+        mMainCameraMan->scroll(0, 0, 30.0f);
+    }
+    mMainCameraMan->update(0.0f);
+    delete previous;
 }
 
 void FilamentApp::Window::mouseDown(int button, ssize_t x, ssize_t y) {
@@ -835,9 +921,14 @@ void FilamentApp::Window::keyDown(AppKey key) {
 
     // Decide which view will get this key's corresponding keyUp event.
     // If we're currently in a mouse grap session, it should be the mouse grab's target view.
-    // Otherwise, it should be whichever view we're currently hovering over.
+    // Camera movement keys (WASD, etc.) always go to the main view.
+    // Otherwise, route to whichever view we're currently hovering over.
     CView* targetView = nullptr;
-    if (mMouseEventTarget) {
+    CameraManipulator::Key cameraKey;
+    const bool isCameraKey = manipulatorKeyFromKeycode(key, cameraKey);
+    if (isCameraKey && mMainView) {
+        targetView = mMainView;
+    } else if (mMouseEventTarget) {
         targetView = mMouseEventTarget;
     } else {
         for (auto const& view : mViews) {
@@ -1034,6 +1125,9 @@ bool FilamentApp::CView::intersects(ssize_t x, ssize_t y) {
 
 void FilamentApp::CView::setCameraManipulator(CameraManipulator* cm) {
     mCameraManipulator = cm;
+    if (mCameraManipulator) {
+        mCameraManipulator->setViewport(mViewport.width, mViewport.height);
+    }
 }
 
 void FilamentApp::CView::setCamera(Camera* camera) {

@@ -113,6 +113,10 @@ public:
         mCameraParams.far = far;
     }
 
+    void resetCameraManipulator(filament::math::float3 eye, filament::math::float3 target,
+            filament::math::float3 up, float verticalFovDegrees = 33.0f,
+            float farPlane = 5000.0f);
+
     void addOffscreenView(filament::View* view) { mOffscreenViews.push_back(view); }
 
     size_t getSkippedFrameCount() const { return mSkippedFrames; }
@@ -223,6 +227,9 @@ public:
         void keyDown(filament::app::AppKey scancode);
         void keyUp(filament::app::AppKey scancode);
         void resize(WindowCameraParams const& cameraParams);
+        void resetMainCameraManipulator(filament::math::float3 eye,
+                filament::math::float3 target, filament::math::float3 up,
+                float verticalFovDegrees, float farPlane);
 
         filament::Renderer* getRenderer() { return mRenderer; }
         filament::SwapChain* getSwapChain() { return mSwapChain; }
@@ -292,6 +299,7 @@ private:
     std::string mWindowTitle;
     std::vector<filament::View*> mOffscreenViews;
     WindowCameraParams mCameraParams{};
+    Window* mWindow = nullptr;
     bool mReconfigureCameras = false;
     uint8_t mFroxelInfoAge = 0x42;
     uint8_t mFroxelGridEnabled = 0;
