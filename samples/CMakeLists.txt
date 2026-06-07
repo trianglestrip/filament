@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)
-project(filament-samples C ASM)
+project(filament-samples C CXX ASM)
 
 if (FILAMENT_SKIP_SAMPLES)
     return()
@@ -322,7 +322,7 @@ if (NOT ANDROID)
     add_demo(texturedquad)
     add_demo(vbotest)
     add_demo(viewtest)
-    add_demo(pbrt_kitchen)
+    add_demo(pbrt_viewer)
 
     # Sample app specific
     target_link_libraries(frame_generator PRIVATE imageio)
@@ -337,7 +337,7 @@ if (NOT ANDROID)
     target_link_libraries(sample_cloth PRIVATE filameshio)
     target_link_libraries(sample_normal_map PRIVATE filameshio)
     target_link_libraries(suzanne PRIVATE filameshio suzanne-resources)
-    target_link_libraries(pbrt_kitchen PRIVATE pbrtio-filament sample-resources)
+    target_link_libraries(pbrt_viewer PRIVATE pbrtio-filament sample-resources viewer)
 
     if (FILAMENT_DISABLE_MATOPT)
         add_definitions(-DFILAMENT_DISABLE_MATOPT=1)

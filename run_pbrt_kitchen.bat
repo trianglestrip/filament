@@ -2,12 +2,13 @@
 setlocal
 
 set "ROOT=%~dp0"
-set "EXE=%ROOT%out\bin\Release\pbrt_kitchen.exe"
-set "SCENE=D:\gitProject\VLR_WF\models\kitchen\scene-v4.pbrt"
+set "BUILD_DIR=%ROOT%out\cmake-release"
+set "EXE=%BUILD_DIR%\bin\Release\pbrt_viewer.exe"
+set "SCENE=D:\models\pbrt-v4-scenes\barcelona-pavilion\pavilion-day.pbrt"
 
 if not exist "%EXE%" (
-    echo [INFO] pbrt_kitchen.exe not found. Building Release target...
-    cmake --build "%ROOT%out" --config Release --target pbrt_kitchen -- /m:1
+    echo [INFO] pbrt_viewer.exe not found. Building Release target...
+    cmake --build "%BUILD_DIR%" --config Release --target pbrt_viewer -- /m:1
     if errorlevel 1 (
         echo [ERROR] Build failed.
         exit /b 1

@@ -99,7 +99,7 @@ void AutomationEngine::exportScreenshot(View* view, Renderer* renderer, std::str
         backend::PixelBufferDescriptor::PixelDataType::UBYTE,
         [](void* buffer, size_t size, void* user) {
             ScreenshotState* state = static_cast<ScreenshotState*>(user);
-            if (state->engine->isTerminated()) {
+            if (state->engine && state->engine->isTerminated()) {
                 delete[] static_cast<uint8_t*>(buffer);
                 delete state;
                 return;
@@ -126,7 +126,7 @@ void AutomationEngine::exportScreenshot(View* view, Renderer* renderer, std::str
             outstream.close();
 
             delete[] static_cast<uint8_t*>(buffer);
-            if (state->autoclose) {
+            if (state->autoclose && state->engine) {
                 state->engine->requestClose();
             }
             delete state;

@@ -618,6 +618,10 @@ void PbrtFilamentSceneHost::destroy(Engine& engine, Scene& scene) {
         EntityManager::get().destroy(asset.entity);
     }
     mMeshAssets.clear();
+
+    for (auto& [_, mi] : mMaterialInstances) {
+        engine.destroy(mi);
+    }
     mMaterialInstances.clear();
 
     for (Material* material : mOwnedMaterials) {
